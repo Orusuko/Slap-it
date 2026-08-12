@@ -42,10 +42,18 @@ export const songSchema = z
           type: z.literal("local"),
           path: z.string().min(1),
         }),
-        // Canción subida por un jugador (wizard "Sube tu canción"): el audio
-        // vive como blob en IndexedDB de ese dispositivo, no en `public/`.
+        // Canción subida antes de la biblioteca cloud (o importada sin
+        // audio): el MP3, si existe, vive como blob en IndexedDB de ESE
+        // dispositivo. No se comparte con otros anfitriones.
         z.object({
           type: z.literal("user"),
+        }),
+        // Canción de la biblioteca colaborativa: el MP3 vive en el bucket
+        // Storage `song-audio` de Supabase, bajo la key `objectKey`. Se
+        // resuelve con una URL firmada en tiempo de reproducción.
+        z.object({
+          type: z.literal("supabase"),
+          objectKey: z.string().min(1),
         }),
       ])
       .optional(),

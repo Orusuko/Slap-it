@@ -61,14 +61,16 @@ import {
   type HostChannel,
   type PlayerChannel,
 } from "./realtime/roomChannel";
+import {
+  deleteCloudSong,
+  getStoredUploaderName,
+  listCloudSongs,
+  saveCloudSong,
+  setStoredUploaderName,
+  type CloudSongRecord,
+} from "./songs/cloudSongStore";
 import { downloadUserSongJson, parseUserSongJson } from "./songs/songExport";
 import { UploadSongWizard } from "./songs/UploadSongWizard";
-import {
-  deleteUserSong,
-  listUserSongs,
-  saveUserSong,
-  type UserSongRecord,
-} from "./songs/userSongStore";
 
 type Role = "host" | "player" | null;
 const ACK_TIMEOUT_MS = 8_000;
@@ -175,15 +177,23 @@ function ActionButton({
 function Home({
   busyJoin,
   error,
+  librarySongs,
+  libraryLoading,
+  libraryError,
   onCreate,
   onJoin,
   onOpenUpload,
+  onDeleteSong,
 }: {
   busyJoin: boolean;
   error: string;
+  librarySongs: CloudSongRecord[];
+  libraryLoading: boolean;
+  libraryError: string;
   onCreate: () => void;
   onJoin: (name: string, code: string) => void;
   onOpenUpload: () => void;
+  onDeleteSong: (songId: string, title: string) => void;
 }) {
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
@@ -210,6 +220,35 @@ function Home({
           </span>
           <ArrowRight size={18} />
         </button>
+        {libraryLoading && librarySongs.length === 0 && (
+          <p className="library-status">Cargando biblioteca del grupo…</p>
+        )}
+        {!libraryLoading && libraryError && (
+          <p className="library-status is-error">{libraryError}</p>
+        )}
+        {librarySongs.length > 0 && (
+          <div className="home-songs">
+            <div className="home-songs-head">
+              <span>Biblioteca del grupo</span>
+            </div>
+            <ul>
+              {librarySongs.map(({ song, uploadedBy }) => (
+                <li key={song.id}>
+                  <span>
+                    <strong>{song.title}</strong>
+                    <small>{song.artist} · subida por {uploadedBy}</small>
+                  </span>
+                  <button type="button" onClick={() => onDeleteSong(song.id, song.title)} aria-label={`Eliminar ${song.title}`}>
+                    <Trash2 size={15} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {!libraryLoading && !libraryError && librarySongs.length === 0 && (
+          <p className="library-status">Aún no hay canciones en la biblioteca. Sube la primera.</p>
+        )}
       </div>
 
       <div className="entry-panel">
@@ -294,27 +333,35 @@ function Lobby({
   role,
   busy,
   error,
-  userSongs,
+  librarySongs,
+  libraryError,
+  pendingImportSong,
   onConfig,
   onSelectSong,
   onStart,
   onOpenUpload,
-  onExportUserSong,
-  onDeleteUserSong,
-  onImportUserSong,
+  onExportSong,
+  onDeleteSong,
+  onImportJsonFile,
+  onImportAudioFile,
+  onCancelImport,
 }: {
   state: RoomPublicState;
   role: Exclude<Role, null>;
   busy: boolean;
   error: string;
-  userSongs: UserSongRecord[];
+  librarySongs: CloudSongRecord[];
+  libraryError: string;
+  pendingImportSong: Song | null;
   onConfig: (config: GameConfig) => void;
   onSelectSong: (songId: string | null) => void;
   onStart: (config: GameConfig) => void;
   onOpenUpload: () => void;
-  onExportUserSong: (songId: string) => void;
-  onDeleteUserSong: (songId: string) => void;
-  onImportUserSong: (file: File) => void;
+  onExportSong: (songId: string) => void;
+  onDeleteSong: (songId: string, title: string) => void;
+  onImportJsonFile: (file: File) => void;
+  onImportAudioFile: (file: File) => void;
+  onCancelImport: () => void;
 }) {
   const [config, setConfig] = useState<GameConfig>(state.config);
   useEffect(() => setConfig(state.config), [state.config]);
@@ -400,9 +447,9 @@ function Lobby({
                 onChange={(event) => onSelectSong(event.target.value || null)}
               >
                 <option value="">Al azar (catálogo de fiesta)</option>
-                {userSongs.length > 0 && (
-                  <optgroup label="Mis canciones">
-                    {userSongs.map(({ song }) => (
+                {librarySongs.length > 0 && (
+                  <optgroup label="Biblioteca del grupo">
+                    {librarySongs.map(({ song }) => (
                       <option key={song.id} value={song.id}>
                         {song.title} — {song.artist}
                       </option>
@@ -424,33 +471,59 @@ function Lobby({
               <button type="button" onClick={onOpenUpload}>
                 <Music2 size={15} /> Sube tu canción
               </button>
-              {state.selectedSongId && userSongs.some((record) => record.song.id === state.selectedSongId) && (
+              {state.selectedSongId && librarySongs.some((record) => record.song.id === state.selectedSongId) && (
                 <>
-                  <button type="button" onClick={() => onExportUserSong(state.selectedSongId!)}>
+                  <button type="button" onClick={() => onExportSong(state.selectedSongId!)}>
                     <Download size={15} /> Exportar
                   </button>
-                  <button type="button" onClick={() => onDeleteUserSong(state.selectedSongId!)}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const record = librarySongs.find((item) => item.song.id === state.selectedSongId);
+                      if (record) onDeleteSong(record.song.id, record.song.title);
+                    }}
+                  >
                     <Trash2 size={15} /> Eliminar
                   </button>
                 </>
               )}
-              <label className="song-import">
-                <FileUp size={15} /> Importar JSON
-                <input
-                  type="file"
-                  accept="application/json"
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    if (file) onImportUserSong(file);
-                    event.target.value = "";
-                  }}
-                />
-              </label>
+              {pendingImportSong ? (
+                <div className="song-import-pending">
+                  <span>Adjunta el MP3 de "{pendingImportSong.title}"</span>
+                  <label className="song-import">
+                    <FileUp size={15} /> Elegir audio
+                    <input
+                      type="file"
+                      accept="audio/*"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        if (file) onImportAudioFile(file);
+                        event.target.value = "";
+                      }}
+                    />
+                  </label>
+                  <button type="button" onClick={onCancelImport}>Cancelar</button>
+                </div>
+              ) : (
+                <label className="song-import">
+                  <FileUp size={15} /> Importar JSON
+                  <input
+                    type="file"
+                    accept="application/json"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) onImportJsonFile(file);
+                      event.target.value = "";
+                    }}
+                  />
+                </label>
+              )}
             </div>
             <p className="helper">
-              Antes de la fiesta: deja un MP3 en <code>public/audio</code>, súbela con letra y taps, o
-              adjúntala en Ready.
+              La biblioteca es compartida: lo que subas aquí lo ven tus amigos desde cualquier
+              dispositivo. Importar un JSON exportado te pedirá el MP3 para subirlo también.
             </p>
+            {libraryError && <p className="helper">No se pudo cargar la biblioteca: {libraryError}</p>}
             <ActionButton
               type="button"
               variant="secondary"
@@ -927,21 +1000,34 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [showUpload, setShowUpload] = useState(false);
-  const [userSongs, setUserSongs] = useState<UserSongRecord[]>([]);
+  const [librarySongs, setLibrarySongs] = useState<CloudSongRecord[]>([]);
+  const [libraryLoading, setLibraryLoading] = useState(true);
+  const [libraryError, setLibraryError] = useState("");
+  const [pendingImportSong, setPendingImportSong] = useState<Song | null>(null);
 
   const applyChannelStatus = useCallback((next: ChannelStatus, _detail?: string) => {
     setStatus(next);
   }, []);
 
-  const refreshUserSongs = useCallback(() => {
-    void listUserSongs()
-      .then(setUserSongs)
-      .catch(() => setUserSongs([]));
+  const refreshLibrarySongs = useCallback(() => {
+    setLibraryLoading(true);
+    void listCloudSongs()
+      .then((songs) => {
+        setLibrarySongs(songs);
+        setLibraryError("");
+      })
+      .catch((caught: unknown) => {
+        setLibraryError(
+          caught instanceof Error ? caught.message : "No se pudo cargar la biblioteca del grupo.",
+        );
+      })
+      .finally(() => setLibraryLoading(false));
   }, []);
 
   useEffect(() => {
-    refreshUserSongs();
-  }, [refreshUserSongs]);
+    if (!credentials) return;
+    refreshLibrarySongs();
+  }, [credentials, refreshLibrarySongs]);
 
   const engineRef = useRef<HostEngine | null>(null);
   const hostChannelRef = useRef<HostChannel | null>(null);
@@ -1032,7 +1118,7 @@ export default function App() {
       setState(nextState);
       hostChannelRef.current?.broadcastState(nextState);
     });
-    engine.registerSongs(userSongs.map((record) => record.song));
+    engine.registerSongs(librarySongs.map((record) => record.song));
     engineRef.current = engine;
     setState(engine.state);
 
@@ -1048,7 +1134,7 @@ export default function App() {
       },
     });
     hostChannelRef.current = channel;
-  }, [applyChannelStatus, credentials, userSongs]);
+  }, [applyChannelStatus, credentials, librarySongs]);
 
   const joinRoom = useCallback(
     (name: string, code: string) => {
@@ -1138,7 +1224,7 @@ export default function App() {
   const handleSongUploaded = useCallback(
     (song: Song) => {
       setShowUpload(false);
-      refreshUserSongs();
+      refreshLibrarySongs();
       if (role === "host" && engineRef.current) {
         engineRef.current.registerSongs([song]);
         if (state?.phase === "lobby") {
@@ -1146,46 +1232,75 @@ export default function App() {
         }
       }
     },
-    [refreshUserSongs, role, runHostAction, state?.phase],
+    [refreshLibrarySongs, role, runHostAction, state?.phase],
   );
 
-  const handleExportUserSong = useCallback(
+  const handleExportSong = useCallback(
     (songId: string) => {
-      const record = userSongs.find((item) => item.song.id === songId);
+      const record = librarySongs.find((item) => item.song.id === songId);
       if (record) downloadUserSongJson(record.song);
     },
-    [userSongs],
+    [librarySongs],
   );
 
-  const handleDeleteUserSong = useCallback(
-    (songId: string) => {
-      void deleteUserSong(songId).then(refreshUserSongs);
+  const handleDeleteSong = useCallback(
+    (songId: string, title: string) => {
+      if (!window.confirm(`¿Eliminar "${title}" de la biblioteca? Se borra para todo el grupo.`)) return;
+      setBusy(true);
+      void deleteCloudSong(songId)
+        .then(() => {
+          setBusy(false);
+          refreshLibrarySongs();
+        })
+        .catch((caught: unknown) => {
+          setBusy(false);
+          setError(caught instanceof Error ? caught.message : "No se pudo eliminar la canción.");
+        });
       if (state?.selectedSongId === songId) {
         runHostAction(() => engineRef.current?.selectSongChoice(null));
       }
     },
-    [refreshUserSongs, runHostAction, state?.selectedSongId],
+    [refreshLibrarySongs, runHostAction, state?.selectedSongId],
   );
 
-  const handleImportUserSong = useCallback(
+  const handleImportJsonFile = useCallback((file: File) => {
+    void file
+      .text()
+      .then((raw) => {
+        const result = parseUserSongJson(raw);
+        if (!result.ok) {
+          setError(result.error);
+          return;
+        }
+        setError("");
+        setPendingImportSong(result.song);
+      })
+      .catch(() => setError("No se pudo leer el archivo JSON."));
+  }, []);
+
+  const handleCancelImport = useCallback(() => setPendingImportSong(null), []);
+
+  const handleImportAudioFile = useCallback(
     (file: File) => {
-      void file
-        .text()
-        .then((raw) => {
-          const result = parseUserSongJson(raw);
-          if (!result.ok) {
-            setError(result.error);
-            return undefined;
-          }
-          return saveUserSong(result.song, null).then(() => {
-            setError("");
-            refreshUserSongs();
-            if (role === "host") engineRef.current?.registerSongs([result.song]);
-          });
+      if (!pendingImportSong) return;
+      const name = getStoredUploaderName() || window.prompt("Tu nombre, para la biblioteca:")?.trim() || "Anónimo";
+      setStoredUploaderName(name);
+      const song: Song = { ...pendingImportSong, audioSource: { type: "supabase", objectKey: pendingImportSong.id } };
+      setBusy(true);
+      setError("");
+      void saveCloudSong(song, file, name)
+        .then(() => {
+          setBusy(false);
+          setPendingImportSong(null);
+          refreshLibrarySongs();
+          if (role === "host") engineRef.current?.registerSongs([song]);
         })
-        .catch(() => setError("No se pudo importar el archivo."));
+        .catch((caught: unknown) => {
+          setBusy(false);
+          setError(caught instanceof Error ? caught.message : "No se pudo subir la canción importada.");
+        });
     },
-    [refreshUserSongs, role],
+    [pendingImportSong, refreshLibrarySongs, role],
   );
 
   const castVote = useCallback(
@@ -1210,9 +1325,13 @@ export default function App() {
         <Home
           busyJoin={busy}
           error={error}
+          librarySongs={librarySongs}
+          libraryLoading={libraryLoading}
+          libraryError={libraryError}
           onCreate={createRoom}
           onJoin={joinRoom}
           onOpenUpload={() => setShowUpload(true)}
+          onDeleteSong={handleDeleteSong}
         />
       );
     }
@@ -1224,7 +1343,9 @@ export default function App() {
             role={role}
             busy={busy}
             error={error}
-            userSongs={userSongs}
+            librarySongs={librarySongs}
+            libraryError={libraryError}
+            pendingImportSong={pendingImportSong}
             onConfig={(config) => runHostAction(() => engineRef.current!.configure(config))}
             onSelectSong={(songId) => runHostAction(() => engineRef.current!.selectSongChoice(songId))}
             onStart={(config) =>
@@ -1234,9 +1355,11 @@ export default function App() {
               })
             }
             onOpenUpload={() => setShowUpload(true)}
-            onExportUserSong={handleExportUserSong}
-            onDeleteUserSong={handleDeleteUserSong}
-            onImportUserSong={handleImportUserSong}
+            onExportSong={handleExportSong}
+            onDeleteSong={handleDeleteSong}
+            onImportJsonFile={handleImportJsonFile}
+            onImportAudioFile={handleImportAudioFile}
+            onCancelImport={handleCancelImport}
           />
         );
       case "ready":
@@ -1310,15 +1433,20 @@ export default function App() {
     createRoom,
     credentials,
     error,
-    handleDeleteUserSong,
-    handleExportUserSong,
-    handleImportUserSong,
+    handleCancelImport,
+    handleDeleteSong,
+    handleExportSong,
+    handleImportAudioFile,
+    handleImportJsonFile,
     hostAudio,
     joinRoom,
+    libraryError,
+    libraryLoading,
+    librarySongs,
+    pendingImportSong,
     role,
     runHostAction,
     state,
-    userSongs,
   ]);
 
   return (

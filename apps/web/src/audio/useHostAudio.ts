@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Song } from "@slay-it/shared";
+import { getCloudAudioUrl } from "../songs/cloudSongStore";
 import { getUserSongAudioBlob } from "../songs/userSongStore";
 
 export type HostAudioSource = "none" | "catalog" | "manual";
@@ -131,8 +132,39 @@ export function useHostAudio(): HostAudio {
     if (manualOverrideRef.current) return;
     const token = ++loadTokenRef.current;
 
-    // Canción subida por un jugador: el audio vive como blob en IndexedDB de
-    // este dispositivo (no hay URL pública que sondear con `probeAudioUrl`).
+    // Canción de la biblioteca colaborativa: el audio vive en Supabase
+    // Storage; se resuelve con una URL firmada (no hay ruta pública fija
+    // que sondear con `probeAudioUrl`).
+    if (song?.audioSource?.type === "supabase") {
+      const objectKey = song.audioSource.objectKey;
+      setFileName(null);
+      setSource("none");
+      setNeedsGesture(false);
+      setProbing(true);
+      void getCloudAudioUrl(objectKey)
+        .then((url) => {
+          if (token !== loadTokenRef.current || manualOverrideRef.current) return;
+          setProbing(false);
+          if (!url) {
+            resetToNone();
+            return;
+          }
+          revokeObjectUrl();
+          const audio = ensureAudio();
+          audio.src = url;
+          audio.preload = "auto";
+          setFileName(`${song.title} (biblioteca)`);
+          setSource("catalog");
+        })
+        .catch(() => {
+          if (token === loadTokenRef.current) resetToNone();
+        });
+      return;
+    }
+
+    // Canción subida por un jugador antes de la biblioteca cloud: el audio
+    // vive como blob en IndexedDB de este dispositivo (no hay URL pública
+    // que sondear con `probeAudioUrl`).
     if (song?.audioSource?.type === "user") {
       setFileName(null);
       setSource("none");

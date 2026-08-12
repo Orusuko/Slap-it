@@ -103,6 +103,22 @@ export async function deleteUserSong(id: string): Promise<void> {
   }
 }
 
+/** Borra metadata y audio de todas las canciones subidas en este dispositivo. */
+export async function clearAllUserSongs(): Promise<void> {
+  const db = await openDb();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction([SONGS_STORE, AUDIO_STORE], "readwrite");
+      tx.objectStore(SONGS_STORE).clear();
+      tx.objectStore(AUDIO_STORE).clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error("No se pudieron borrar las canciones"));
+    });
+  } finally {
+    db.close();
+  }
+}
+
 export async function getUserSongAudioBlob(id: string): Promise<Blob | null> {
   if (!isIndexedDbAvailable()) return null;
   return withDb(async (db) => {

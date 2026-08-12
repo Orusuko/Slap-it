@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { getLyricWindow, type Song } from "@slay-it/shared";
+import { cloudSongExists, getStoredUploaderName, saveCloudSong, setStoredUploaderName } from "./cloudSongStore";
 import { parseLyrics } from "./parseLyrics";
 import {
   beginTapSync,
@@ -27,9 +28,8 @@ import {
   type TapSyncState,
 } from "./tapSync";
 import { assembleUserSong, createUserSongId } from "./userSong";
-import { isIndexedDbAvailable, saveUserSong } from "./userSongStore";
 
-type WizardStep = "meta" | "lyrics" | "sync";
+type WizardStep = "meta" | "lyrics" | "chorus" | "sync";
 
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
@@ -50,6 +50,7 @@ export function UploadSongWizard({
 
   const [title, setTitle] = useState("");
   const [artist, setArtist] = useState("");
+  const [uploaderName, setUploaderName] = useState(() => getStoredUploaderName());
   const [file, setFile] = useState<File | null>(null);
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [duration, setDuration] = useState<number | null>(null);
@@ -59,6 +60,21 @@ export function UploadSongWizard({
   const [lyricsText, setLyricsText] = useState("");
   const lines = useMemo(() => parseLyrics(lyricsText), [lyricsText]);
 
+  const [chorusLines, setChorusLines] = useState<Set<number>>(new Set());
+  const toggleChorusLine = (index: number) => {
+    setChorusLines((current) => {
+      const next = new Set(current);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  };
+  // Si se edita la letra y cambia el número de líneas, los índices marcados
+  // quedarían apuntando a otro texto: es más seguro reiniciar la marca.
+  useEffect(() => {
+    setChorusLines(new Set());
+  }, [lines.length]);
+
   const [tapState, setTapState] = useState<TapSyncState | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playhead, setPlayhead] = useState(0);
@@ -66,9 +82,8 @@ export function UploadSongWizard({
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const [saving, setSaving] = useState(false);
+  const [saveStage, setSaveStage] = useState("");
   const [saveError, setSaveError] = useState("");
-
-  const idbAvailable = useMemo(() => isIndexedDbAvailable(), []);
 
   useEffect(
     () => () => {
@@ -109,8 +124,11 @@ export function UploadSongWizard({
     probe.src = url;
   };
 
-  const canContinueMeta = Boolean(file && title.trim() && artist.trim() && duration && !metaError);
+  const canContinueMeta = Boolean(
+    file && title.trim() && artist.trim() && uploaderName.trim() && duration && !metaError,
+  );
   const canContinueLyrics = lines.length > 0;
+  const canContinueChorus = chorusLines.size > 0;
 
   const startSyncStep = () => {
     setTapState(createTapSyncState(lines));
@@ -203,8 +221,14 @@ export function UploadSongWizard({
 
   const handleSave = async () => {
     if (!tapState || !file || !isTapSyncDone(tapState)) return;
+    const name = uploaderName.trim();
+    if (!name) {
+      setSaveError("Escribe tu nombre antes de guardar.");
+      return;
+    }
     setSaving(true);
     setSaveError("");
+    setSaveStage("");
     try {
       const id = createUserSongId();
       const songLines = buildLinesFromTapSync(tapState, id);
@@ -214,17 +238,35 @@ export function UploadSongWizard({
         artist,
         duration: duration ?? songLines.at(-1)!.end,
         lines: songLines,
+        chorusLineIndices: chorusLines,
+        audioSource: { type: "supabase", objectKey: id },
       });
-      await saveUserSong(song, file);
+
+      const alreadyExists = await cloudSongExists(title, artist).catch(() => false);
+      if (
+        alreadyExists &&
+        !window.confirm(
+          `Ya hay una canción "${title} — ${artist}" en la biblioteca del grupo. ¿Subir otra copia?`,
+        )
+      ) {
+        setSaving(false);
+        return;
+      }
+
+      await saveCloudSong(song, file, name, (stage) =>
+        setSaveStage(stage === "uploading" ? "Subiendo audio…" : "Guardando en la biblioteca…"),
+      );
+      setStoredUploaderName(name);
       onSaved(song);
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "No se pudo guardar la canción.");
     } finally {
       setSaving(false);
+      setSaveStage("");
     }
   };
 
-  const stepIndex = step === "meta" ? 0 : step === "lyrics" ? 1 : 2;
+  const stepIndex = step === "meta" ? 0 : step === "lyrics" ? 1 : step === "chorus" ? 2 : 3;
 
   return (
     <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Sube tu canción">
@@ -236,19 +278,17 @@ export function UploadSongWizard({
           </button>
         </header>
         <div className="wizard-steps-dots" aria-hidden="true">
-          {["Audio", "Letra", "Sincronía"].map((label, index) => (
+          {["Audio", "Letra", "Estribillo", "Sincronía"].map((label, index) => (
             <span key={label} className={index === stepIndex ? "is-active" : index < stepIndex ? "is-done" : ""}>
               {label}
             </span>
           ))}
         </div>
 
-        {!idbAvailable && (
-          <p className="wizard-warning">
-            Este navegador no permite guardar canciones localmente. Puedes probar el flujo, pero
-            no se guardará al final.
-          </p>
-        )}
+        <p className="wizard-hint">
+          Se guardará en la biblioteca compartida de Supabase: tus amigos la verán desde cualquier
+          dispositivo, no solo en este navegador.
+        </p>
 
         {step === "meta" && (
           <div className="wizard-body">
@@ -266,6 +306,16 @@ export function UploadSongWizard({
             <div className="field">
               <label htmlFor="song-artist">Artista</label>
               <input id="song-artist" value={artist} onChange={(e) => setArtist(e.target.value)} placeholder="Ej. Grupo o solista" maxLength={80} />
+            </div>
+            <div className="field">
+              <label htmlFor="song-uploader">Tu nombre</label>
+              <input
+                id="song-uploader"
+                value={uploaderName}
+                onChange={(e) => setUploaderName(e.target.value)}
+                placeholder="Quién sube esta canción"
+                maxLength={24}
+              />
             </div>
             <div className="wizard-footer">
               <span />
@@ -291,7 +341,42 @@ export function UploadSongWizard({
               <button type="button" className="button button--secondary" onClick={() => setStep("meta")}>
                 <ArrowLeft size={18} /> Atrás
               </button>
-              <button type="button" className="button button--primary" disabled={!canContinueLyrics} onClick={startSyncStep}>
+              <button type="button" className="button button--primary" disabled={!canContinueLyrics} onClick={() => setStep("chorus")}>
+                Continuar <ArrowRight size={18} />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === "chorus" && (
+          <div className="wizard-body">
+            <p className="wizard-hint">
+              Marca las líneas que son estribillo. Si se repite en varias partes de la canción,
+              márcalo cada vez que aparezca.
+            </p>
+            <ul className="chorus-picker">
+              {lines.map((line, index) => (
+                <li key={index}>
+                  <label className={chorusLines.has(index) ? "is-chorus" : ""}>
+                    <input
+                      type="checkbox"
+                      checked={chorusLines.has(index)}
+                      onChange={() => toggleChorusLine(index)}
+                    />
+                    <span>{line}</span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+            <p className="wizard-hint">
+              {chorusLines.size} línea{chorusLines.size === 1 ? "" : "s"} marcada{chorusLines.size === 1 ? "" : "s"} como estribillo.
+              {chorusLines.size === 0 && " Marca al menos una para continuar."}
+            </p>
+            <div className="wizard-footer">
+              <button type="button" className="button button--secondary" onClick={() => setStep("lyrics")}>
+                <ArrowLeft size={18} /> Atrás
+              </button>
+              <button type="button" className="button button--primary" disabled={!canContinueChorus} onClick={startSyncStep}>
                 Continuar <ArrowRight size={18} />
               </button>
             </div>
@@ -365,7 +450,7 @@ export function UploadSongWizard({
             {saveError && <p className="wizard-error">{saveError}</p>}
 
             <div className="wizard-footer">
-              <button type="button" className="button button--secondary" onClick={() => { setPreviewing(false); setStep("lyrics"); }}>
+              <button type="button" className="button button--secondary" onClick={() => { setPreviewing(false); setStep("chorus"); }}>
                 <ArrowLeft size={18} /> Atrás
               </button>
               <button
@@ -374,7 +459,7 @@ export function UploadSongWizard({
                 disabled={!done || saving}
                 onClick={() => void handleSave()}
               >
-                {saving ? "Guardando…" : <>Guardar <Save size={18} /></>}
+                {saving ? saveStage || "Guardando…" : <>Guardar <Save size={18} /></>}
               </button>
             </div>
           </div>

@@ -14,12 +14,17 @@ La app está pensada para publicarse gratis en **GitHub Pages**, así que no hay
 ningún servidor de por medio:
 
 - El navegador del **anfitrión** ejecuta toda la lógica de la partida (sala,
-  fases, apagón, marcador). Es la única fuente de verdad.
-- **Supabase Realtime** (plan gratuito) actúa solo como cable de conexión:
-  transporta mensajes entre el anfitrión y los teléfonos. No se crean tablas
-  ni se guarda ninguna canción, nombre o puntaje en una base de datos.
+  fases, apagón, marcador). Es la única fuente de verdad de la partida en
+  curso; nada de eso se guarda en una base de datos.
+- **Supabase Realtime** (plan gratuito) transporta mensajes entre el
+  anfitrión y los teléfonos durante la partida.
+- **Supabase Postgres + Storage** (mismo proyecto, plan gratuito) guarda la
+  **biblioteca de canciones**: cada canción subida con el wizard queda
+  disponible para todo el grupo, desde cualquier dispositivo, no solo en el
+  navegador de quien la subió.
 - Si el anfitrión cierra la pestaña, la sala se cierra. Si un jugador sale,
-  su historial de esa partida se elimina.
+  su historial de esa partida se elimina. La biblioteca de canciones, en
+  cambio, persiste entre partidas.
 - Como el transporte es Supabase (internet), **ya no es obligatorio estar en
   la misma WiFi**: basta con que todos tengan conexión a internet y el mismo
   código de sala.
@@ -31,15 +36,44 @@ internet. La app publicada en GitHub Pages no lo usa ni depende de él.
 ## Requisitos
 
 - Node.js 20 o posterior
-- Una cuenta gratuita en [supabase.com](https://supabase.com) (solo para
-  Realtime, sin necesidad de configurar base de datos)
+- Una cuenta gratuita en [supabase.com](https://supabase.com) (Realtime para
+  la partida + Postgres/Storage para la biblioteca de canciones)
 
 ## Configurar Supabase (una sola vez)
 
 1. Crea un proyecto gratuito en supabase.com.
 2. Ve a **Settings → API** y copia el **Project URL** y la **anon public
-   key**.
-3. No necesitas crear ninguna tabla: solo se usa el canal de Realtime.
+   key**. Los necesitarás en `apps/web/.env` (desarrollo) y como secrets de
+   GitHub Actions (Pages).
+3. Ve a **SQL Editor → New query**, pega el contenido completo de
+   [`supabase/schema.sql`](supabase/schema.sql) y pulsa **Run**. Esto crea:
+   - La tabla `songs` (metadata + letra + timings de cada canción subida).
+   - El bucket de Storage `song-audio` (privado, límite 12 MB por archivo)
+     donde viven los MP3.
+   - Las políticas de RLS que permiten a cualquiera con la anon key leer,
+     subir y borrar canciones (modelo "biblioteca compartida entre amigos de
+     confianza"; sin login).
+4. Ve a **Storage → song-audio → Configuration → CORS** y añade los orígenes
+   desde los que se usará la app: `http://localhost:5173` para desarrollo y
+   tu URL de GitHub Pages (p. ej. `https://tu-usuario.github.io`) para
+   producción. Sin esto, subir o reproducir audio desde el navegador falla
+   con un error de CORS.
+
+El script es seguro de volver a correr (usa `if not exists` / `on conflict`
+en todo), así que si algo falla puedes pegarlo de nuevo sin duplicar nada.
+
+### Sobre la biblioteca de canciones (importante)
+
+- Es **colaborativa y sin login**: cualquiera con la URL de la app puede
+  subir, listar y borrar canciones de la biblioteca del grupo. Es el diseño
+  pensado para un grupo de amigos de confianza, no para uso público.
+- Los MP3 que suba cada quien son **responsabilidad de esa persona**: úsalo
+  para uso privado entre amigos, no para redistribuir música con copyright
+  a terceros. El bucket es privado (URLs firmadas, no indexable), pero no es
+  una protección legal.
+- El plan gratuito de Supabase incluye **~1 GB de Storage**: con el límite
+  de 12 MB por canción alcanza para decenas de temas; evita subir WAV sin
+  comprimir.
 
 ## Iniciar en desarrollo
 
@@ -113,11 +147,11 @@ En ambos casos:
 El catálogo embebido (`packages/shared/src/catalog.ts`) empieza **vacío a
 propósito**: no trae demos ni canciones de prueba. Para tener canciones
 jugables, sube una con el wizard **«Sube tu canción»** desde el inicio
-(audio + letra + tap-sync, se guarda en IndexedDB del navegador del host) o
-añade entradas reales en `catalog.ts` (ver «Añadir canciones» más abajo). Si
-en el futuro agregas placeholders (`id` con prefijo `placeholder-` o título
-`PLACEHOLDER — …`), esos **no** entran al sorteo de fiesta salvo que no quede
-otra opción.
+(audio + letra + estribillo + tap-sync; queda en la **biblioteca compartida**
+de Supabase, visible para todo el grupo) o añade entradas reales en
+`catalog.ts` (ver «Añadir canciones» más abajo). Si en el futuro agregas
+placeholders (`id` con prefijo `placeholder-` o título `PLACEHOLDER — …`),
+esos **no** entran al sorteo de fiesta salvo que no quede otra opción.
 
 El modo por defecto de la sala es **relevo con sorpresa**. El individual
 sigue disponible en la configuración del lobby.
@@ -136,8 +170,8 @@ fallida y se pasa al marcador.
 2. Ten al menos una canción jugable: súbela con el wizard «Sube tu canción»,
    o ten un MP3 (en `apps/web/public/audio/` con `audioSource`, o listo para
    adjuntar en Ready).
-3. En el lobby puedes fijar la canción (catálogo o «Mis canciones») o dejarla
-   al azar (sin placeholders).
+3. En el lobby puedes fijar la canción (catálogo o «Biblioteca del grupo») o
+   dejarla al azar (sin placeholders).
 4. En la TV: solo Slay It (sin Spotify Lyrics abiertas).
 
 ## Publicar en GitHub Pages (gratis)
@@ -195,15 +229,22 @@ npm start -w @slay-it/server
 
 Hay dos formas de tener canciones jugables:
 
-1. **Wizard «Sube tu canción»** (recomendado para jugar rápido): desde la
-   pantalla de inicio, sube el MP3, pega/escribe la letra y sincronízala
-   tocando un botón por verso mientras suena. Queda guardada en el navegador
-   del host (IndexedDB) y aparece en «Mis canciones» del selector del lobby.
-   Detalle de implementación en `apps/web/src/songs/`.
+1. **Wizard «Sube tu canción»** (recomendado, es colaborativo): desde la
+   pantalla de inicio, cualquiera del grupo sube el MP3, pega/escribe la
+   letra, marca qué líneas son el estribillo y sincroniza tocando un botón
+   por línea mientras suena. Al guardar sube el audio al bucket
+   `song-audio` de Supabase Storage y la letra/timings a la tabla `songs`
+   (ver «Configurar Supabase» más arriba). Queda visible de inmediato en la
+   «Biblioteca del grupo» de Home y del selector del lobby, en **cualquier
+   dispositivo**. Detalle de implementación en `apps/web/src/songs/`
+   (`cloudSongStore.ts`, `chorusRanges.ts`, `UploadSongWizard.tsx`).
 2. **Catálogo embebido en el repo** (`packages/shared/src/catalog.ts`,
    `demoSongs`) — empieza **vacío a propósito**; útil si quieres canciones
-   que viajen con el código (ej. para GitHub Pages sin depender de
-   IndexedDB) en vez de solo en el navegador del host.
+   que viajen con el código (ej. una demo fija que no dependa de Supabase).
+
+Importar un JSON exportado previamente (botón **Exportar** en el lobby) no
+trae el audio (pesaría demasiado); al importarlo, la app pide el MP3 para
+subirlo también a la biblioteca.
 
 Cada canción se valida con Zod (`songSchema` en `packages/shared/src/model.ts`):
 
@@ -251,8 +292,10 @@ Cada canción se valida con Zod (`songSchema` en `packages/shared/src/model.ts`)
 
 Para que el modo relevo complete dos vueltas con hasta 8 jugadores conviene
 tener bastantes secciones cortas (~16 × 2 líneas). Si hay pocas, `planRelay`
-reduce vueltas solo. El wizard «Sube tu canción» genera automáticamente una
-sola sección con todas las líneas, suficiente para relevo básico.
+reduce vueltas solo. El wizard «Sube tu canción» agrupa la letra en
+secciones `verse`/`chorus` según qué líneas se marcaron como estribillo (si
+no se marca ninguna, cae en una sola sección `verse`, suficiente para relevo
+básico).
 
 ## Estructura
 
