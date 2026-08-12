@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// VITE_BASE_PATH lo define el workflow de GitHub Pages (p. ej. "/slay-it/").
+// VITE_BASE_PATH lo define el workflow de GitHub Pages (p. ej. "/Slap-it/").
 // En desarrollo local no se define y la app se sirve desde la raíz.
 export default defineConfig({
   base: process.env.VITE_BASE_PATH ?? "/",

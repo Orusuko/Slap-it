@@ -72,6 +72,12 @@ describe("hostEngine", () => {
     expect(joinLin.ok).toBe(true);
     expect(broadcasts).toHaveLength(2);
     expect(engine.state.players.map(({ id }) => id)).toEqual(["p1", "p2"]);
+    // Cada publish debe emitir una copia nueva: si se reutiliza la misma
+    // referencia, React omite el re-render y el host no ve a los jugadores.
+    expect(broadcasts[0]).not.toBe(broadcasts[1]);
+    expect(broadcasts[0]!.players).not.toBe(broadcasts[1]!.players);
+    expect(broadcasts[0]!.players).toHaveLength(1);
+    expect(broadcasts[1]!.players).toHaveLength(2);
 
     const duplicateJoin = engine.handleRemoteCommand({
       type: "join",

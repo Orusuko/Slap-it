@@ -12,7 +12,8 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  # No cancelar deploys en curso: un cancel a medias deja Pages en estado inconsistente.
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -26,6 +27,16 @@ jobs:
         with:
           node-version: lts/*
           cache: npm
+
+      # Debe ir antes del build: base_path alimenta VITE_BASE_PATH del sitio de proyecto.
+      # enablement: true intenta crear Pages con fuente "GitHub Actions" si aún no existe.
+      # Nota: GITHUB_TOKEN a veces no basta para enablement; si falla, habilitar manualmente
+      # en Settings > Pages > Build and deployment > Source: GitHub Actions.
+      - name: Configurar GitHub Pages
+        id: pages
+        uses: actions/configure-pages@v6
+        with:
+          enablement: true
 
       - name: Instalar dependencias
         run: npm ci
@@ -44,10 +55,8 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
-          VITE_BASE_PATH: /${{ github.event.repository.name }}/
-
-      - name: Configurar GitHub Pages
-        uses: actions/configure-pages@v6
+          # base_path de Pages (p. ej. "/Slap-it"); Vite exige barra final.
+          VITE_BASE_PATH: ${{ steps.pages.outputs.base_path }}/
 
       - name: Subir artefacto
         uses: actions/upload-pages-artifact@v5

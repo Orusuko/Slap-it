@@ -1,20 +1,16 @@
 import type { Song } from "./model.js";
+import { yoElAventurero } from "./songs/yo-el-aventurero.js";
 
 /**
- * Catálogo de fiesta embebido en el repo. Empieza **vacío a propósito**
- * (se retiraron las canciones de demo/placeholder y la canción real de
- * prueba para poder validar el flujo desde cero).
+ * Catálogo de fiesta embebido en el repo.
  *
- * Formas de tener canciones jugables:
- * 1. **Recomendada**: usar el wizard «Sube tu canción» desde `Home` — el
- *    audio + letra + timings quedan en IndexedDB del navegador del host
- *    (ver `apps/web/src/songs/`), sin tocar este archivo.
- * 2. Añadir aquí objetos `Song` reales (ver `songSchema` en `./model.ts`)
- *    con `audioSource: { type: "local", path: "/audio/archivo.mp3" }` y el
- *    MP3 correspondiente en `apps/web/public/audio/`.
+ * Incluye la canción real ya usada en el proyecto (Pedro Fernández —
+ * Yo el aventurero). Más canciones: wizard «Sube tu canción» (IndexedDB)
+ * o entradas adicionales aquí con `audioSource.local` + MP3 en
+ * `apps/web/public/audio/`.
  *
  * `isPlaceholderSong` (en `./game.ts`) sigue disponible por si en el futuro
  * se vuelven a usar placeholders `PLACEHOLDER — …` / `id` con prefijo
  * `placeholder-`.
  */
-export const demoSongs: Song[] = [];
+export const demoSongs: Song[] = [yoElAventurero];

@@ -529,7 +529,10 @@ export class RoomManager {
 
   private publish(room: Room): void {
     room.state.hostNow = Date.now();
-    this.emitState(room.state.code, room.state);
+    // Clonar: el estado interno se muta in-place. Sin copia, React ve la misma
+    // referencia en setState y omite el re-render (el host no ve joins, etc.),
+    // mientras los jugadores sí actualizan porque el broadcast llega deserializado.
+    this.emitState(room.state.code, structuredClone(room.state));
   }
 
   private requireRoom(codeInput: string): Room {
