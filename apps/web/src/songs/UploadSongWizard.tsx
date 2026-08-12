@@ -351,27 +351,39 @@ export function UploadSongWizard({
         {step === "chorus" && (
           <div className="wizard-body">
             <p className="wizard-hint">
-              Marca las líneas que son estribillo. Si se repite en varias partes de la canción,
+              Toca las líneas que son estribillo. Si se repite en varias partes de la canción,
               márcalo cada vez que aparezca.
             </p>
             <ul className="chorus-picker">
-              {lines.map((line, index) => (
-                <li key={index}>
-                  <label className={chorusLines.has(index) ? "is-chorus" : ""}>
-                    <input
-                      type="checkbox"
-                      checked={chorusLines.has(index)}
-                      onChange={() => toggleChorusLine(index)}
-                    />
-                    <span>{line}</span>
-                  </label>
-                </li>
-              ))}
+              {lines.map((line, index) => {
+                const active = chorusLines.has(index);
+                return (
+                  <li key={index}>
+                    <label className={active ? "is-chorus" : ""}>
+                      <input
+                        type="checkbox"
+                        className="sr-only"
+                        checked={active}
+                        onChange={() => toggleChorusLine(index)}
+                      />
+                      <span className="chorus-picker-index">{index + 1}</span>
+                      <span className="chorus-picker-text">{line}</span>
+                      <span className="chorus-picker-flag">
+                        {active ? <><Check size={13} /> Estribillo</> : "Marcar"}
+                      </span>
+                    </label>
+                  </li>
+                );
+              })}
             </ul>
-            <p className="wizard-hint">
-              {chorusLines.size} línea{chorusLines.size === 1 ? "" : "s"} marcada{chorusLines.size === 1 ? "" : "s"} como estribillo.
-              {chorusLines.size === 0 && " Marca al menos una para continuar."}
-            </p>
+            <div className={`chorus-summary ${chorusLines.size > 0 ? "is-active" : ""}`}>
+              <Music2 size={15} />
+              <span>
+                {chorusLines.size === 0
+                  ? "Marca al menos una línea para continuar."
+                  : `${chorusLines.size} línea${chorusLines.size === 1 ? "" : "s"} marcada${chorusLines.size === 1 ? "" : "s"} como estribillo.`}
+              </span>
+            </div>
             <div className="wizard-footer">
               <button type="button" className="button button--secondary" onClick={() => setStep("lyrics")}>
                 <ArrowLeft size={18} /> Atrás
