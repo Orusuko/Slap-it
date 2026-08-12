@@ -12,7 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
-import type { Song } from "@slay-it/shared";
+import { getLyricWindow, type Song } from "@slay-it/shared";
 import { parseLyrics } from "./parseLyrics";
 import {
   beginTapSync,
@@ -62,6 +62,7 @@ export function UploadSongWizard({
   const [tapState, setTapState] = useState<TapSyncState | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playhead, setPlayhead] = useState(0);
+  const [previewing, setPreviewing] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const [saving, setSaving] = useState(false);
@@ -115,8 +116,20 @@ export function UploadSongWizard({
     setTapState(createTapSyncState(lines));
     setIsPlaying(false);
     setPlayhead(0);
+    setPreviewing(false);
     setStep("sync");
   };
+
+  useEffect(() => {
+    if (step !== "sync") {
+      audioRef.current?.pause();
+      return;
+    }
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.currentTime = 0;
+    void audio.play().catch(() => {});
+  }, [step]);
 
   const started = tapState ? isTapSyncStarted(tapState) : false;
   const done = tapState ? isTapSyncDone(tapState) : false;
@@ -124,6 +137,18 @@ export function UploadSongWizard({
   const currentLine = started && !done ? lines[currentIndex] ?? null : null;
   const nextLine = !started ? lines[0] ?? null : !done ? lines[currentIndex + 1] ?? null : null;
   const previousLine = started && !done && currentIndex > 0 ? lines[currentIndex - 1] : null;
+  const lineNumber = !started ? 1 : done ? lines.length : currentIndex + 1;
+
+  const previewLines = useMemo(() => {
+    if (!tapState || !isTapSyncDone(tapState)) return null;
+    try {
+      return buildLinesFromTapSync(tapState, "preview");
+    } catch {
+      return null;
+    }
+  }, [tapState]);
+  const previewWindow =
+    previewing && previewLines ? getLyricWindow({ lines: previewLines }, playhead) : null;
 
   const togglePlay = () => {
     const audio = audioRef.current;
@@ -134,15 +159,14 @@ export function UploadSongWizard({
 
   const handleCentralTap = () => {
     const audio = audioRef.current;
-    if (!audio || !tapState) return;
-    if (!isTapSyncStarted(tapState)) {
-      void audio.play().catch(() => {});
-      setTapState(beginTapSync(tapState, audio.currentTime));
-      return;
-    }
-    if (!isTapSyncDone(tapState)) {
-      setTapState(tapNext(tapState, audio.currentTime));
-    }
+    if (!audio) return;
+    const atSeconds = audio.currentTime;
+    setTapState((current) => {
+      if (!current) return current;
+      if (!isTapSyncStarted(current)) return beginTapSync(current, atSeconds);
+      if (!isTapSyncDone(current)) return tapNext(current, atSeconds);
+      return current;
+    });
   };
 
   const handleEnded = () => {
@@ -154,15 +178,27 @@ export function UploadSongWizard({
     });
   };
 
-  const handleUndo = () => setTapState((current) => (current ? undoTapSync(current) : current));
+  const handleUndo = () => {
+    setPreviewing(false);
+    setTapState((current) => (current ? undoTapSync(current) : current));
+  };
   const handleRestart = () => {
+    setPreviewing(false);
     setTapState((current) => (current ? restartTapSync(current) : current));
     const audio = audioRef.current;
     if (audio) {
-      audio.pause();
       audio.currentTime = 0;
+      void audio.play().catch(() => {});
     }
-    setIsPlaying(false);
+  };
+
+  const handlePreview = () => {
+    if (!done) return;
+    setPreviewing(true);
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.currentTime = 0;
+    void audio.play().catch(() => {});
   };
 
   const handleSave = async () => {
@@ -277,22 +313,41 @@ export function UploadSongWizard({
                 {isPlaying ? <Pause size={20} /> : <Play size={20} />}
               </button>
               <span className="tap-time">{formatTime(playhead)} / {formatTime(duration ?? 0)}</span>
+              <span className="tap-progress">Línea {lineNumber} / {lines.length}</span>
             </div>
 
+            <p className="wizard-hint">
+              {previewing
+                ? "Preescucha: la línea grande solo aparece cuando llega su tiempo grabado."
+                : started
+                  ? "Pulsa cuando termine la línea grande. Una pulsación por cada línea del editor, no por estrofa."
+                  : "El audio ya suena. Pulsa Empezar cuando empiece a cantarse la primera línea."}
+            </p>
+
             <div className="tap-stage">
-              <p className="tap-line tap-line--prev">{previousLine ?? " "}</p>
-              {done ? (
-                <p className="tap-line tap-line--current tap-line--done"><Check size={28} /> ¡Sincronización completa!</p>
+              {previewWindow ? (
+                <>
+                  <p className="tap-line tap-line--prev">{previewWindow.previous?.text ?? " "}</p>
+                  <p className="tap-line tap-line--current">{previewWindow.current?.text ?? "Prepárate…"}</p>
+                  <p className="tap-line tap-line--next">{previewWindow.next?.text ?? " "}</p>
+                </>
               ) : (
-                <p className="tap-line tap-line--current">
-                  {currentLine ?? (started ? "…" : "Pulsa Empezar cuando comience a cantarse la primera línea")}
-                </p>
+                <>
+                  <p className="tap-line tap-line--prev">{previousLine ?? " "}</p>
+                  {done ? (
+                    <p className="tap-line tap-line--current tap-line--done"><Check size={28} /> ¡Sincronización completa!</p>
+                  ) : (
+                    <p className="tap-line tap-line--current">
+                      {currentLine ?? (started ? "…" : "Pulsa Empezar cuando empiece a cantarse la primera línea")}
+                    </p>
+                  )}
+                  <p className="tap-line tap-line--next">{done ? " " : nextLine ?? " "}</p>
+                </>
               )}
-              <p className="tap-line tap-line--next">{done ? " " : nextLine ?? " "}</p>
             </div>
 
             <button type="button" className="tap-central-button" disabled={done} onClick={handleCentralTap}>
-              {!started ? "Empezar" : done ? "Completado" : "Siguiente verso"}
+              {!started ? "Empezar" : done ? "Completado" : "Siguiente línea"}
             </button>
 
             <div className="tap-controls">
@@ -302,12 +357,15 @@ export function UploadSongWizard({
               <button type="button" onClick={handleRestart} disabled={!started}>
                 <RotateCcw size={16} /> Reiniciar
               </button>
+              <button type="button" onClick={handlePreview} disabled={!done}>
+                <Play size={16} /> Probar letra
+              </button>
             </div>
 
             {saveError && <p className="wizard-error">{saveError}</p>}
 
             <div className="wizard-footer">
-              <button type="button" className="button button--secondary" onClick={() => setStep("lyrics")}>
+              <button type="button" className="button button--secondary" onClick={() => { setPreviewing(false); setStep("lyrics"); }}>
                 <ArrowLeft size={18} /> Atrás
               </button>
               <button

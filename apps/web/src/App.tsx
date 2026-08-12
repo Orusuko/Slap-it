@@ -39,6 +39,7 @@ import {
   demoSongs,
   formatTurnSectionsLabel,
   getCurrentTurn,
+  getLyricWindow,
   getNextVisibleTurn,
   getPlaybackPosition,
   isPlaceholderSong,
@@ -663,11 +664,7 @@ function Karaoke({ state, role, busy, error, onRecalibrate, hostAudio, clockOffs
   // Los jugadores siguen derivando la posición de `hostNow` + offset.
   const hostAudioPosition = role === "host" ? hostAudio.getCurrentTime() : null;
   const position = hostAudioPosition ?? getPlaybackPosition(state, now);
-  const index = song.lines.findIndex((line) => position >= line.start && position < line.end);
-  const currentIndex = index >= 0 ? index : song.lines.findIndex((line) => line.start > position);
-  const current = song.lines[currentIndex] ?? null;
-  const previous = currentIndex > 0 ? song.lines[currentIndex - 1] : null;
-  const next = currentIndex >= 0 ? song.lines[currentIndex + 1] : null;
+  const { previous, current, next } = getLyricWindow(song, position);
   const blackoutWindow = Boolean(
     state.blackout && position >= state.blackout.start && position < state.blackout.end,
   );

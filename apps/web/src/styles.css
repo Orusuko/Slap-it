@@ -1028,6 +1028,13 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   color: var(--cyan);
 }
 .tap-time { font-family: "Roboto Mono", monospace; color: var(--muted); }
+.tap-progress {
+  margin-left: auto;
+  font-family: "Roboto Mono", monospace;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--cyan);
+}
 
 .tap-stage {
   min-height: 190px;
@@ -1070,6 +1077,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 
 .tap-controls {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
 }
 .tap-controls button {

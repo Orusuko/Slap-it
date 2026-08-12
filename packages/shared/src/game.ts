@@ -10,10 +10,47 @@ export function maskLyrics(text: string): string {
   return text.replace(/[\p{L}\p{N}]+/gu, (word) => word[0] + "_".repeat(word.length - 1));
 }
 
-export function getCurrentLine(song: Song, timeSeconds: number): SongLine | null {
+export function getCurrentLine(
+  song: Pick<Song, "lines">,
+  timeSeconds: number,
+): SongLine | null {
   return (
     song.lines.find((line) => timeSeconds >= line.start && timeSeconds < line.end) ?? null
   );
+}
+
+export interface LyricWindow {
+  previous: SongLine | null;
+  current: SongLine | null;
+  next: SongLine | null;
+}
+
+/**
+ * Ventana de letra para el escenario de karaoke.
+ * `current` solo se llena si el playhead cae dentro de `[start, end)`;
+ * en intro, huecos u outro no se adelanta la próxima línea como actual
+ * (esa ya va en `next`).
+ */
+export function getLyricWindow(song: Pick<Song, "lines">, timeSeconds: number): LyricWindow {
+  const current = getCurrentLine(song, timeSeconds);
+  if (current) {
+    const index = song.lines.findIndex((line) => line.id === current.id);
+    return {
+      previous: index > 0 ? song.lines[index - 1]! : null,
+      current,
+      next: song.lines[index + 1] ?? null,
+    };
+  }
+  const next = song.lines.find((line) => line.start > timeSeconds) ?? null;
+  let previous: SongLine | null = null;
+  for (let index = song.lines.length - 1; index >= 0; index -= 1) {
+    const line = song.lines[index]!;
+    if (line.end <= timeSeconds) {
+      previous = line;
+      break;
+    }
+  }
+  return { previous, current: null, next };
 }
 
 export function getPlaybackPosition(

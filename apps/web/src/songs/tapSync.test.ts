@@ -118,4 +118,17 @@ describe("tapSync", () => {
     expect(lines[0]).toMatchObject({ id: "custom-1-line-1", start: 0, end: 3, text: "Uno", sectionId: "custom-1-section-1" });
     for (const line of lines) expect(line.start).toBeLessThan(line.end);
   });
+
+  it("al tapear al final de cada línea conserva el start del canto (no fuerza 0)", () => {
+    let state = createTapSyncState(LINES);
+    state = beginTapSync(state, 12.4);
+    state = tapNext(state, 16.1);
+    state = tapNext(state, 19.8);
+    state = tapNext(state, 23.2);
+    const built = buildLinesFromTapSync(state, "custom-1");
+    expect(built[0]).toMatchObject({ start: 12.4, end: 16.1, text: "Uno" });
+    expect(built[1]).toMatchObject({ start: 16.1, end: 19.8, text: "Dos" });
+    expect(built[2]).toMatchObject({ start: 19.8, end: 23.2, text: "Tres" });
+    expect(built[0]!.start).not.toBe(0);
+  });
 });
