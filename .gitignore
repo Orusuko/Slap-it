@@ -4,3 +4,4 @@ dist/
 coverage/
 *.log
 .env
+scripts/e2e-artifacts/
