@@ -2,7 +2,7 @@
 
 > Documento listo para pegar a otra IA (p. ej. Claude Opus).  
 > **Estado:** P0 + P1 + P3 + P4 + **P5 hechos** (biblioteca cloud + estribillo + setlist/rondas/karaoke/sync/sin borrado público).  
-> **Pendiente humano:** volver a pegar `supabase/schema.sql` en el SQL Editor de Supabase (quita las políticas `DELETE`, añade la columna `genre`). Sin esto, P5 no queda activo en producción aunque el código ya esté desplegado.
+> **Pendiente humano:** pegar `supabase/migration.sql` en el SQL Editor de Supabase (solo columna `genre` + quitar políticas `DELETE`). Sin esto, P5 no queda activo en producción aunque el código ya esté desplegado.
 
 ---
 
@@ -336,10 +336,10 @@ Checklist manual:
 
 ## Notas para el humano (dueño del repo)
 
-0. **P5 ya está en `main`.** Antes de la próxima fiesta, **vuelve a pegar** `supabase/schema.sql` completo en el SQL Editor: quita las políticas `DELETE` de `songs` y `storage.objects`, y añade la columna `genre` (`add column if not exists genre text not null default 'otro'`, ya incluida en el script). Es seguro volver a correrlo aunque ya lo hayas corrido antes.  
+0. **P5 ya está en `main`.** Antes de la próxima fiesta, pega **`supabase/migration.sql`** (no el schema completo) en el SQL Editor: añade la columna `genre` y quita las políticas `DELETE` de `songs` y `storage.objects`. Es seguro volver a correrlo. `schema.sql` queda para instalaciones nuevas.  
 1. `apps/web/.env` y secrets de Actions (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`) no cambian.  
 2. CORS de Storage: Pages (`https://orusuko.github.io` o el origin real) + `http://localhost:5173`.  
-3. **Borrar canciones:** Table Editor (`songs`) + Storage (`song-audio`), borrando la fila y el objeto con el mismo `id`. Ya no se puede desde la app ni con la anon key (RLS lo bloquea tras volver a pegar el SQL).  
+3. **Borrar canciones:** Table Editor (`songs`) + Storage (`song-audio`), borrando la fila y el objeto con el mismo `id`. Ya no se puede desde la app ni con la anon key (RLS lo bloquea tras correr `migration.sql`).  
 4. Canciones subidas antes de P5 quedan con género `'otro'` (default de la columna nueva) aunque el JSONB tenga `"custom"`; en el setlist salen como «Otro». No se migran a ciegas: re-súbelas o edita el JSONB a mano si quieres reclasificarlas.  
 5. Plan gratis ~1 GB Storage; 12 MB/canción.  
 6. Fiesta: host en Pages o localhost; móviles con internet y el código. El host necesita firmar/leer Storage.  

@@ -64,6 +64,11 @@ internet. La app publicada en GitHub Pages no lo usa ni depende de él.
 El script es seguro de volver a correr (usa `if not exists` / `on conflict`
 en todo), así que si algo falla puedes pegarlo de nuevo sin duplicar nada.
 
+Si el proyecto **ya** corrió el schema de P4 (tabla `songs` + bucket
+`song-audio` ya existen), no vuelvas a pegar `schema.sql`: usa
+[`supabase/migration.sql`](supabase/migration.sql), que solo añade la
+columna `genre` y quita las políticas de borrado.
+
 ### Sobre la biblioteca de canciones (importante)
 
 - Es **colaborativa y sin login**: cualquiera con la URL de la app puede

@@ -1,6 +1,8 @@
 -- Slay It — biblioteca de canciones colaborativa (P4 + P5)
 --
--- Pega este archivo completo en Supabase → SQL Editor → New query → Run.
+-- Instalación NUEVA: pega este archivo en Supabase → SQL Editor → Run.
+-- Proyecto que YA corrió el schema de P4: usa supabase/migration.sql
+-- (solo columna genre + quitar políticas DELETE).
 -- Es seguro volver a correrlo (usa IF NOT EXISTS / ON CONFLICT en todo).
 --
 -- Diseño deliberado: sin login. Cualquiera con la anon key del proyecto
