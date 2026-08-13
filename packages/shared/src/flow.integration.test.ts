@@ -41,6 +41,10 @@ describe("integración · flujo de partida", () => {
       blackoutDuration: mode === "relay" ? "section" : "line",
       mask: "total",
       groupVoting: true,
+      // Preserva el comportamiento previo a P5 (auto-inferido): relevo = 1
+      // ronda, individual = una ronda por jugador.
+      totalRounds: mode === "individual" ? players.length : 1,
+      karaokeSingerIds: [],
     });
     for (const [id, name] of players) rooms.join(created.code, id, name);
     return { rooms, code: created.code };
@@ -163,6 +167,8 @@ describe("integración · flujo de partida", () => {
       blackoutDuration: "line",
       mask: "partial",
       groupVoting: false,
+      totalRounds: 1,
+      karaokeSingerIds: [],
     });
     rooms.join(created.code, "p1", "Ada");
     rooms.join(created.code, "p2", "Lin");

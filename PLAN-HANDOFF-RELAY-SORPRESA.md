@@ -1,8 +1,8 @@
 # Plan / Prompt de handoff — Slay It
 
 > Documento listo para pegar a otra IA (p. ej. Claude Opus).  
-> **Estado del motor / fiesta:** P0 + P1 + P3 (wizard local) hechos.  
-> **Siguiente entrega principal: P4 — biblioteca cloud colaborativa en Supabase + marcado de estribillo.**
+> **Estado:** P0 + P1 + P3 + P4 + **P5 hechos** (biblioteca cloud + estribillo + setlist/rondas/karaoke/sync/sin borrado público).  
+> **Pendiente humano:** volver a pegar `supabase/schema.sql` en el SQL Editor de Supabase (quita las políticas `DELETE`, añade la columna `genre`). Sin esto, P5 no queda activo en producción aunque el código ya esté desplegado.
 
 ---
 
@@ -19,18 +19,18 @@ Implementar de punta a punta en el repo existente. No reescribir la arquitectura
 
 Ingeniero senior full-stack sobre **Slay It** (repo monorepo existente).  
 No reescribas la arquitectura de juego: **host autoritativo + Supabase Realtime (Broadcast/Presence) + deploy GitHub Pages**.  
-**Sí** debes pasar a usar **Postgres + Storage** del mismo proyecto Supabase para la biblioteca de canciones.  
+La biblioteca de canciones **ya vive** en Postgres + Storage del mismo proyecto Supabase (P4 hecho).  
 UI en **español**. Sin APIs Spotify/Apple Music para play/pause/seek.  
 Respeta el estilo del código existente; cambios enfocados; tests en verde.
 
 ### Contexto del producto
 
 - Karaoke de fiesta: TV/PC = anfitrión (audio + control); móviles = jugadores (letra + votos).  
-- El catálogo estático (`demoSongs`) está **vacío**. Las canciones reales salen del wizard «Sube tu canción».  
-- Hoy esas canciones viven en **IndexedDB del navegador del host**. Eso no sirve: si preparas canciones en casa, en la fiesta (otro PC) no están.  
-- El enfoque es **trabajo colaborativo entre amigos**: cualquiera del grupo debe poder subir, listar y usar canciones desde **cualquier dispositivo** con internet.  
+- El catálogo estático (`demoSongs`) está **vacío**. Las canciones reales salen del wizard «Sube tu canción» y viven en la **biblioteca cloud** (tabla `songs` + bucket `song-audio`).  
+- Cualquiera del grupo puede **subir** canciones desde cualquier dispositivo. **Nadie** debe poder borrarlas desde la app: el dueño las borra en el dashboard de Supabase.  
+- El host de cada partida arma un **setlist de esa noche** (género + quién subió + excluir temas sueltos) para no mezclar gustos del grupo A con el B.  
 - Multijugador: canal Realtime por código de sala (esto no cambia).  
-- GitHub Pages ya inyecta `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY` en el build (secrets de Actions).
+- GitHub Pages ya inyecta `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY`.
 
 ### Completado (no reimplementar, no revertir)
 
@@ -46,204 +46,259 @@ npm run build:web
 | Relevo + sorpresa, badge, anti-spoiler, defaults | Hecho |
 | Audio probe + adjunto + autoplay nudge | Hecho |
 | Presence con gracia, join tras `whenReady()`, `hostNow` | Hecho |
-| Wizard «Sube tu canción»: audio + letra + tap-sync | Hecho (persistencia **local**; hay que moverla a la nube) |
-| `RoomManager.registerSongs` + selector lobby | Hecho |
+| Wizard: audio + letra + estribillo + tap-sync + guardar en Supabase | Hecho |
+| `audioSource.type === "supabase"` + URL firmada en `useHostAudio` | Hecho |
+| `RoomManager.registerSongs` + selector lobby (biblioteca cloud) | Hecho |
 | Letra del host anclada a `audio.currentTime` vía `getLyricWindow` | Hecho — **no adelantar** la próxima línea en intro/preroll |
-| Calibración ±0.1 s y ±0.5 s | Hecho |
-| Tap-sync UX: autoplay al entrar, **Empezar** solo marca, **Siguiente línea**, contador `Línea X/N`, **Probar letra** | Hecho — **no volver** a `play()` + `beginTapSync` en t=0 |
-| Lista «Mis canciones» + borrar en Home (hoy lee IndexedDB) | Hecho a nivel UI; hay que apuntarla a Supabase |
+| Calibración ±0.1 s y ±0.5 s | Hecho (ajuste fino; **no** basta para el delay de ~2 s de P5) |
+| Tap-sync UX: autoplay al entrar, **Empezar** solo marca, **Siguiente línea**, contador, **Probar letra** | Hecho — **no volver** a `play()` + `beginTapSync` en t=0 |
+| Paso Estribillo: filas táctiles (número + píldora «Marcar» / «Estribillo»), no checkboxes nativos | Hecho |
+| SQL `supabase/schema.sql` (tabla + bucket + RLS) | Hecho — P5 **cambia** las políticas DELETE |
 
-Archivos clave: `apps/web/src/App.tsx`, `apps/web/src/realtime/*`, `apps/web/src/audio/useHostAudio.ts`, `apps/web/src/game/hostEngine.ts`, `apps/web/src/songs/*` (`UploadSongWizard.tsx`, `tapSync.ts`, `userSong.ts`, `userSongStore.ts`, `parseLyrics.ts`), `packages/shared/src/{engine,model,catalog,game,relay}.ts`.
+Archivos clave: `apps/web/src/App.tsx`, `apps/web/src/realtime/*`, `apps/web/src/audio/useHostAudio.ts`, `apps/web/src/game/hostEngine.ts`, `apps/web/src/songs/*` (`UploadSongWizard.tsx`, `cloudSongStore.ts`, `chorusRanges.ts`, `tapSync.ts`, `userSong.ts`), `packages/shared/src/{engine,model,catalog,game,relay}.ts`, `supabase/schema.sql`.
 
-### Cómo está el wizard hoy (extender, no tirar)
+### Cómo está hoy (extender, no tirar)
 
-- **Esquema** (`packages/shared/src/model.ts`): `audioSource` = `{ type: "local", path } | { type: "user" }`. Habrá que añadir un tercer tipo cloud.  
-- **Persistencia actual**: `userSongStore.ts` → IndexedDB `slay-it-songs` (`songs` + `audio`). Deja de ser fuente de verdad.  
-- **Parse letra**: `parseLyrics.ts` — una línea de texto = una línea de karaoke.  
-- **Tap-sync**: `tapSync.ts` — `begin` = start de la línea 0; cada tap cierra la actual y abre la siguiente en el mismo `currentTime`.  
-- **Ensamblado**: `assembleUserSong` crea **una sola sección `verse`** y pone `chorusStart` en el start de la primera línea. Eso rompe el espíritu del relevo/apagón (todo el tema es una estrofa). P4 debe partir las secciones de verdad.  
-- **UI**: modal 3 pasos (meta → letra → sync). Home tiene «Sube tu canción» y lista local.  
-- **Motor**: `registerSongs` ya permite jugar canciones que no están en `demoSongs`.  
-- **Repro**: `useHostAudio.loadCatalog` resuelve `type: "user"` con blob IDB. Debe resolver también URL de Storage.
-
-### Por qué el estribillo importa (no es cosmética)
-
-`planRelay` reparte **`song.sections`** (1–4 por turno). `selectBlackout` / `selectStartPosition` buscan cerca de **`chorusStart`**.  
-Con una sola sección `verse`, el relevo no tiene estrofas reales y el apagón no cae en el estribillo. Al marcar estribillo hay que **construir varias secciones** (`verse` / `chorus`) y fijar `chorusStart` al inicio del primer bloque chorus.
+- **Biblioteca:** `cloudSongStore.ts` lista/guarda/borra en Supabase. Home y Lobby leen la nube. IndexedDB (`userSongStore.ts`) ya no es fuente de verdad.  
+- **Borrado público (quitar en P5):** hay papelera en Home y botón «Eliminar» en el lobby; `deleteCloudSong` + RLS `DELETE` para `anon`. Quitar UI **y** políticas: el dueño borra en el dashboard.  
+- **Género:** `Song.genre` existe (string). El wizard lo hardcodea a `"custom"`. No hay filtro en el lobby.  
+- **Uploader:** `uploaded_by` ya está en la fila y se muestra en Home. No hay filtro en el lobby.  
+- **Selector de canción:** un `<select>` (azar / una canción). No hay setlist ni exclusión múltiple.  
+- **Rondas:** relevo → `totalRounds = 1` (una canción y se acaba). Individual → `totalRounds = players.length`. Finished solo ofrece «Crear nueva sala» (se pierden los puntos).  
+- **Modos:** `individual` | `relay`. No hay karaoke sin apagón ni voto de estrellas. Voto actual: `Record<string, boolean>` (sí/no) → +1 punto.  
+- **Sync (bug real):** el host ancla la letra a `audio.currentTime`; los móviles derivan de `startedAt` + `hostNow`. El motor pone `phase = "playing"` y `startedAt = Date.now()` **antes** de que `playFrom()` resuelva. Con audio de Storage (URL firmada) el buffer de la 1ª vez suele ser 0.5–2 s. Los móviles oyen **la TV del host**, no un MP3 propio. `hostNow` no se manda en continuo, solo en cada `publish()`.
 
 ---
 
-### ENTREGA PRINCIPAL — P4: Biblioteca cloud colaborativa + estribillo
+### ENTREGA PRINCIPAL — P5: Setlist + rondas + karaoke + sync + sin borrado público
 
-Objetivo: que **tú y tus amigos** suban canciones desde cualquier PC, y que **cualquier host** (en casa o en la fiesta) vea el mismo catálogo, con audio y letra sincronizada, **sin pasar JSON ni MP3 a mano**.
+Objetivo: que el host arme **la noche** (qué géneros, de quién, qué temas), juegue **varias rondas acumulando puntos**, tenga un modo **karaoke por turnos** con voto de estrellas, y que la letra de los móviles **siga el altavoz de la TV**. Nadie borra canciones desde la app.
 
-#### 1. Modelo en Supabase (humano aplica SQL; tú dejas el archivo en el repo)
+**Orden de implementación (obligatorio):**
 
-Añade `supabase/schema.sql` (o `supabase/migrations/001_songs_library.sql`) **listo para pegar** en el SQL Editor del dashboard. Incluye políticas RLS. No asumas que hay CLI de Supabase instalada.
+1. Seguridad: quitar borrado de la UI + cerrar RLS `DELETE`.  
+2. Sync del playhead (si no, el resto se siente mal).  
+3. Género en wizard + setlist del lobby (género ∩ uploader − excluidas).  
+4. Rondas N + puntos acumulados + «Una más» / «Terminar show».  
+5. Modo karaoke (turnos + estrellas + el host elige cantantes).
 
-**Tabla `songs`** (nombres exactos a tu criterio, pero documenta):
+No entregues 5 si 1–4 no están verdes. 1 y 2 pueden ir en el mismo PR lógico; 3 y 4 juntos; 5 al final.
 
-| Columna | Uso |
-|---------|-----|
-| `id` | PK, el mismo `Song.id` (`custom-…`) |
-| `title`, `artist`, `duration` | para listar sin parsear JSON |
-| `uploaded_by` | apodo de quien subió (colaborativo, visible en UI) |
-| `song` | JSONB con el `Song` completo (líneas, secciones, `chorusStart`, `audioSource`) |
-| `created_at` | timestamptz default `now()` |
+---
 
-Índice útil: `(lower(title), lower(artist))` para avisar duplicados.
+#### 1. Quitar borrado público (UI + RLS)
 
-**Bucket Storage `song-audio`:**
+**Problema:** quitar el botón no basta. La anon key va en el bundle; hoy `anon` puede `DELETE` en `songs` y en `storage.objects` del bucket `song-audio`.
 
-- Un objeto por canción: `{id}` (o `{id}.mp3`).  
-- Límite de subida en la app: **12 MB**. Aceptar `audio/*` (mp3, m4a, wav, ogg).  
-- Bucket **privado** (sin listado público). Reproducción con **URL firmada** (`createSignedUrl`, ~1 h) al cargar la canción en el host.  
-- Políticas Storage: `anon` puede `SELECT`, `INSERT`, `DELETE` (y `UPDATE` si hace falta overwrite) **solo** en ese bucket.
+**App:**
 
-**RLS tabla `songs` (colaborativo, sin login):**
+- Quitar papelera de Home y el botón «Eliminar» del lobby.  
+- Quitar handlers `handleDeleteSong` / `onDeleteSong`.  
+- Quitar (o dejar de exportar/usar) `deleteCloudSong` en `cloudSongStore.ts`. No dejes un camino de borrado desde el cliente.  
+- Home sigue listando la biblioteca (título, artista, quién subió) **solo lectura**. Copy: las canciones las limpia el dueño del proyecto en Supabase, no desde la app.
 
-- `SELECT` para `anon` y `authenticated`.  
-- `INSERT` / `UPDATE` / `DELETE` para `anon` y `authenticated`.  
+**SQL** (`supabase/schema.sql`, y el humano **vuelve a pegarlo** en el SQL Editor):
 
-Esto es deliberado: el grupo de amigos comparte la URL de GitHub Pages y el proyecto Supabase. **No** pongas Auth obligatorio (fricción). **Sí** documenta el riesgo: quien tenga la URL de la app + la anon key del bundle puede escribir. Mitigaciones mínimas en la app (abajo). No inventes un backend aparte.
+- `DROP POLICY` de `songs_delete_all` y `song_audio_delete_all`. **No** las vuelvas a crear.  
+- Deja `SELECT` + `INSERT` para `anon` y `authenticated` (seguir subiendo).  
+- Cierra también `UPDATE` en tabla y bucket para `anon` si la app no edita canciones (hoy no hace falta overwrite salvo el `upsert` de `saveCloudSong`: si el upsert necesita `UPDATE`, deja `songs_update_all` **o** cambia el save a `insert` y trata el conflicto de id como error). Documenta la decisión.  
+- Storage: `SELECT` + `INSERT` para firmar URL y subir MP3. Sin `DELETE` para `anon`.
 
-Habilitar **Realtime no es necesario** para la tabla; el listado se refresca al abrir Home/Lobby y tras Guardar.
+**README + notas humanas:** el dueño borra filas en Table Editor y objetos en Storage. Quien tenga la URL **sigue pudiendo subir**; ya no puede borrar.
 
-#### 2. Identidad ligera (colaborativa, sin cuentas)
+Tests: no hace falta test de red; sí que la UI no renderice controles de borrar (grep / no props).
 
-- En el wizard, campo obligatorio **«Tu nombre»** / «Quién sube» (`uploaded_by`, max ~24). Guardarlo en `localStorage` para no pedirlo cada vez.  
-- Listados: mostrar `título — artista · subida por X`.  
-- **No** uses login de Supabase Auth en P4.  
-- Antes de borrar: confirmación con el título (`window.confirm` o modal corto). Cualquier amigo puede borrar (catálogo compartido); no hace falta “solo el autor”.  
-- Si ya existe una canción con el mismo título+artista (case-insensitive), avisar y pedir confirmación para subir otra o cancelar.
+---
 
-Opcional barato (si queda limpio): `VITE_LIBRARY_PIN` — un PIN compartido entre amigos, comprobado **solo en el cliente** antes de insert/delete. No es seguridad real (va en el bundle); es un pestillo contra visitas aleatorias. Si lo añades, documenta el secret extra en GitHub Actions y `.env.example`. Si complica de más, omítelo.
+#### 2. Sync: la letra de los móviles sigue el altavoz del host
 
-#### 3. Capa de datos en la app
+**Diagnóstico (no lo “arregles” con más calibración ±0.5 s):**
 
-Nueva pieza (p. ej. `apps/web/src/songs/cloudSongStore.ts`) usando `getSupabaseClient()`:
+Hay dos relojes. El host usa `audio.currentTime`. Los jugadores usan pared (`getPlaybackPosition` = `startPosition + (now - startedAt) + offset`). El motor publica `playing` + `startedAt` y **después** React llama `playFrom()`. Con URL firmada de Storage la 1ª reproducción bufferiza ~0.5–2 s. Los móviles oyen la TV; si su letra va por pared, se desfasán.
 
-- `listCloudSongs()` → filas ordenadas por `created_at` desc.  
-- `saveCloudSong(song, audioFile, uploadedBy)` → upload Storage + upsert fila. Si falla el SQL tras el audio, intenta borrar el objeto huérfano.  
-- `deleteCloudSong(id)` → borra fila + objeto.  
-- `getCloudAudioUrl(id)` → signed URL.
+Pruebas reales: 1ª vez el host iba con delay y los móviles no; 2ª vez (audio en caché) el host iba bien y los móviles no. Encaja con este modelo.
 
-Extiende `audioSource`:
+**Contrato nuevo:**
 
-```ts
-{ type: "local", path: string } | { type: "user" } | { type: "supabase", objectKey: string }
-```
+1. **No marcar `startedAt` ni publicar `playing` “a ciegas” hasta que el audio del host esté sonando.**  
+   - El countdown 3-2-1 puede seguir igual.  
+   - Al llegar a 0: el host llama `playFrom(startPosition)` y espera a que `play()` resuelva (y, si está disponible, al evento `playing`).  
+   - **Entonces** el motor pone `phase = "playing"`, `startedAt = Date.now()`, `hostPlayhead` = `audio.currentTime`, y publica.  
+   - Si `play()` es bloqueado por autoplay, el nudge «Reproducir audio» ya existe: al pulsar, mismo flujo (play → luego `startedAt`).  
+   - Los móviles **no** deben pintar letra de `playing` con un `startedAt` anterior al altavoz.
 
-Las canciones nuevas usan `type: "supabase"`. `type: "user"` puede seguir existiendo por JSON viejos; si no hay blob IDB, el host adjunta audio en Ready como hoy.
+2. **Playhead periódico durante `playing`.**  
+   - El host, cada ~400–600 ms (y al recalibrar), publica en el estado (o en un evento de broadcast ligero) algo equivalente a:  
+     `{ hostPlayhead: number /* segundos de audio.currentTime */, hostNow: number }`.  
+   - Los móviles: `position = hostPlayhead + (Date.now() + clockOffsetMs - hostNow) / 1000`.  
+   - Fuente de verdad = el MP3 de la TV, no el reloj de pared.  
+   - El host **sigue** anclando su propia letra a `audio.currentTime` (no interpolar el playhead publicado consigo mismo).  
+   - No satures Realtime: 2–3 mensajes/s máximo en este canal; el resto del juego ya limita `eventsPerSecond`.
 
-`useHostAudio.loadCatalog`: si `type === "supabase"`, firmar URL y asignarla al `<audio>` (mismo probe/autoplay que catálogo local).
+3. **Warm-up en countdown.**  
+   - En Ready ya hay probe. En countdown, si hay `<audio>` cargado, `preload` / `currentTime = startPosition` para que al 0 no bufferice de cero. No hace falta `play()` audible durante el 3-2-1 si el autoplay lo impide; al menos deja el buffer caliente.
 
-Al arrancar y al guardar: `listCloudSongs` → `registerSongs` en el host. Home y Lobby leen **la nube**, no IndexedDB.
+4. **Calibración ±0.1 / ±0.5 s:** se queda como ajuste fino. Debe hacer `seekBy` en el audio del host **y** el siguiente tick de playhead debe llevar el `currentTime` nuevo a los móviles. No la uses como parche del delay de arranque.
 
-IndexedDB: **deja de ser la biblioteca**. Puedes dejar el módulo como caché opcional o no usarlo para listar. No migres automáticamente canciones viejas de IDB a la nube (el dueño las volverá a subir con estribillo). Sí puedes mostrar un aviso si detectas IDB residual: “Las canciones de este navegador ya no se usan; súbelas de nuevo a la biblioteca compartida”.
+Extiende `RoomPublicState` con `hostPlayhead: number | null` (o el nombre que documentes). Actualiza `getPlaybackPosition` o añade `getDisplayPosition(state, now, role)` para no duplicar fórmulas. Tests unitarios del cálculo (playhead + elapsed). Un test del motor: `startedAt` no se asigna en el callback del countdown **antes** de un “audio ready” inyectable (puedes pasar un hook/`waitUntilPlaying` al `RoomManager` o mover el “go playing” a un método `hostConfirmPlaybackStarted()` que el host llama tras `play()`).
 
-Exportar/importar JSON: **mantener** como respaldo (sin MP3). Importar debe **subir a Supabase** (pedirá el audio otra vez si no está). No dejes el import solo en IDB.
+**No** reescribas `planRelay`. **No** cambies `getLyricWindow` (current vacío en intro).
 
-#### 4. Wizard: marcar el estribillo
+---
 
-Ampliar el **paso Letra** (no hace falta un 4º modal si cabe; si se satura, un paso «Estribillo» entre letra y sync).
+#### 3. Género en el wizard + columna para filtrar
 
-Tras parsear líneas:
+Hoy `assembleUserSong` pone `genre: "custom"`. Todas las canciones cloud actuales salen en el mismo saco hasta recategorizarlas.
 
-1. Lista numerada de líneas.  
-2. El usuario marca **uno o más bloques contiguos** como estribillo (el estribillo suele repetirse). UX sugerida: pulsar «Marcar estribillo», elegir línea inicio y línea fin; botón «Añadir otro estribillo» para el segundo/tercer estribillo. Alternativa aceptable: toggle por línea (`verso` / `estribillo`) con fusión posterior de runs contiguos.  
-3. **Al menos un bloque chorus** para Continuar (si no, el apagón no tiene ancla). Copy claro: “Marca qué líneas son el estribillo (puedes marcar varias veces si se repite)”.  
-4. Las demás líneas quedan como `verse`. No hace falta intro/puente/outro en P4.
+- Lista **cerrada** (no texto libre). Sugerida, en español, editable en un solo módulo (`SONG_GENRES`):  
+  `banda`, `mariachi`, `ranchera`, `norteno`, `cumbia`, `pop`, `rock`, `balada`, `reggaeton`, `otro`.  
+  Labels UI: Banda, Mariachi, Ranchera, Norteño, Cumbia, Pop, Rock, Balada, Reggaetón, Otro.  
+- Paso **Audio** del wizard: select obligatorio de género (junto a título / artista / nombre).  
+- `assembleUserSong` recibe `genre` y lo persiste en `Song.genre`.  
+- Tabla `songs`: añade columna `genre text not null default 'otro'` (o el default que elijas). El SQL debe ser **re-ejecutable** (`add column if not exists`). `saveCloudSong` escribe `genre` en la fila **y** dentro del JSONB. `listCloudSongs` puede filtrar en cliente (el catálogo es pequeño); la columna evita parsear JSON si más adelante hay query.  
+- Canciones ya subidas: quedan en `custom` / `otro`. No migres a ciegas. En el setlist, `custom` cuenta como «Otro» o aparece como género propio «Sin clasificar» — elige uno y documenta. El dueño puede re-subir o editar el JSONB a mano.
 
-**Después del tap-sync**, `assembleUserSong` debe:
+Tests: `assembleUserSong` respeta el género pasado; el schema Zod acepta los valores del enum (cambia `genre: z.string().min(1)` a `z.enum(SONG_GENRES)` **o** deja string y valida en el wizard; preferible enum compartido en `packages/shared` para que lobby y wizard no se desfasen).
 
-- Recibir las líneas ya temporizadas **y** las etiquetas por índice.  
-- Agrupar runs contiguos del mismo tipo en `SongSection` (`verse` | `chorus`) con `start`/`end` de la primera/última línea del run y `lineIds`.  
-- Poner `line.sectionId` coherente (el `songSchema` lo exige).  
-- `chorusStart` = `start` de la **primera** sección `chorus`.  
-- Varias secciones (típico: verse, chorus, verse, chorus…). El relevo necesita **más de una** sección; con 1 sola el plan se degrada.
+---
 
-Tests unitarios de este ensamblado (líneas + rangos chorus → secciones + `chorusStart`). No toques `planRelay` salvo bug evidente.
+#### 4. Setlist del host (género ∩ uploader − excluidas)
 
-#### 5. UX de listados (Home + Lobby)
+El lobby deja de ser “una canción o todo el azar”. El host arma el **pool de esa partida**.
 
-- Home: lista cloud (título, artista, quién subió) + borrar con confirmación + «Sube tu canción». «Borrar todas» **no** debe existir en la nube (demasiado destructivo para un catálogo compartido); quítalo o cámbialo a borrar **una**.  
-- Lobby: optgroup «Biblioteca» (o «Canciones del grupo») con las cloud; el azar debe incluirlas (`registerSongs` + fallback ya existente).  
-- Estados: cargando, error de red, vacío (“Aún no hay canciones. Sube la primera.”).  
-- Progreso de subida del MP3 (porcentaje o “Subiendo audio…”).  
-- El wizard sigue usable en desktop; no es obligatorio mobile-first, pero no lo rompas en pantalla estrecha.
+**UI (solo host, en el lobby), tres controles que se combinan:**
 
-#### 6. Tap-sync: no regresiones
+1. **Géneros** — chips. Por defecto «Todos». Desmarcar = excluir ese género.  
+2. **Quién subió** — chips con los `uploaded_by` distintos de la biblioteca. Por defecto todos. Desmarcar un nombre = no usar las canciones de esa persona (grupo B vs grupo A).  
+3. **Catálogo** — lista ya recortada por 1 y 2, con toggle por canción. Por defecto **todas las del recorte incluidas**. El host desmarca temas sueltos (le gusta *una* de B, no el resto).
 
-Mantén el contrato actual:
+Fórmula: `(géneros activos) ∩ (uploaders activos) − (ids desmarcados)`.
 
-- Al entrar a Sincronía, el audio **ya suena**. **Empezar no llama a `play()`**; solo marca el start de la línea 0.  
-- Copy: pulsa Empezar cuando **empiece a cantarse** la primera línea; luego **Siguiente línea** cuando **termine** la grande.  
-- Contador `Línea X / N`.  
-- `setTapState(current => …)` funcional.  
-- **Probar letra** usa `getLyricWindow` (current vacío en intro).  
-- Karaoke en partida también usa `getLyricWindow`.
+- Si el pool queda vacío, no se puede «Empezar show»; copy claro: “El setlist está vacío. Incluye al menos una canción.”  
+- El `<select>` actual de “una canción / al azar” se **reemplaza o se subsume**:  
+  - Azar = sorteo **dentro del setlist**, no de toda la biblioteca.  
+  - Si el host quiere forzar un tema concreto para la **próxima** ronda, puede pinnearlo (opcional); si complica, omite el pin y que el sorteo + exclusión baste.  
+- `registerSongs` / `selectSong` / `usedSongIds` deben sortear **solo del pool**, no de `demoSongs` vacío + toda la nube. Pasa el setlist al motor al dar a Empezar (p. ej. `start(config, { songIds: string[] })` o `setPlaylist(ids)`).  
+- El setlist es de **esa sala**, no se guarda en Supabase.  
+- Los jugadores no configuran el setlist; pueden ver cuántas canciones hay en el pool si queda limpio.
 
-#### 7. Documentación para el humano
+Tests puros: función `buildSetlist(songs, { genres, uploaders, excludedIds })` → ids. Casos: todos, excluir un género, excluir un uploader, excluir un id, intersección vacía.
 
-Actualiza `README.md` y las notas al final de este archivo:
+---
 
-1. SQL Editor: pegar `supabase/schema.sql`.  
-2. Storage: crear bucket `song-audio` si el SQL no lo crea; confirmar políticas.  
-3. Settings → API: ya tienen URL y anon key (local `.env` + secrets de Pages).  
-4. CORS de Storage: origen de GitHub Pages (`https://orusuko.github.io`) y `http://localhost:5173`.  
-5. Aviso de copyright: MP3s de uso privado entre amigos; no son públicos a propósito, pero las signed URLs existen.  
-6. Plan gratis ≈ 1 GB Storage; 12 MB/canción.
+#### 5. Varias rondas acumulando puntos
 
-#### Fuera de alcance de P4
+Hoy relevo = 1 ronda y Finished sin “seguir”. Individual = 1 ronda por jugador. No hay forma de una noche con 5 canciones y un ganador.
 
-- Login/OAuth, roles admin, moderación.  
-- Editor colaborativo en tiempo real del tap-sync (dos personas tappeando a la vez).  
-- APIs de letras comerciales.  
+**Lobby (host):**
+
+- Stepper **Rondas: 1–12**, default **5** (o 3 si te parece menos agresivo; documenta el default). Aplica a **todos** los modos (relay, individual, karaoke).  
+- `totalRounds` deja de inferirse solo del modo. `start()` usa `config.totalRounds` (añádelo a `GameConfig`).  
+- Individual: si `totalRounds` < número de jugadores, no todos cantan; si es mayor, se cicla. No fuerces `totalRounds = players.length`.
+
+**Tras cada ronda (pantalla Score):**
+
+- Puntos **se acumulan** en `player.score` (como hoy).  
+- Si `round + 1 < totalRounds`: botón **«Siguiente ronda»** (sortea otra canción del setlist, sin repetir hasta agotar; si se agota, rebaraja o permite repetir — documenta; preferible no repetir y si no quedan, avisar y dejar «Terminar show»).  
+- Si ya se llegó a N: botones **«Una más»** (incrementa `totalRounds` en 1 y prepara ronda) y **«Terminar show»** (pasa a `finished`).  
+- **«Terminar show»** también visible antes de N, por si la fiesta se corta.
+
+**Finished:**
+
+- Podio con puntos acumulados de **toda** la noche.  
+- Sigue existiendo «Crear nueva sala» (reset total). No es el único camino.
+
+Tests del motor: `totalRounds` configurable; `continue` no manda a finished si quedan rondas; «una más» incrementa y llama `prepareRound`; `usedSongIds` evita repetir mientras haya pool.
+
+---
+
+#### 6. Modo karaoke por turnos (después de 1–5)
+
+Nuevo `config.mode: "karaoke"`. **No** es un parche del apagón: es otro flujo.
+
+**Reglas:**
+
+- Letra **siempre visible** (no `blackout`, no máscara). No uses `selectBlackout`.  
+- El host, en el lobby (o en Ready, si cabe mejor), elige **qué jugadores cantan** esta noche: uno, varios o todos. Los no elegidos siguen en la sala y **votan**. Mínimo 1 cantante.  
+- Turno = **canción completa para un cantante** (más claro en fiesta que partir por estrofas). El setlist sortea la canción; el host puede reordenar cantantes si queda limpio; si no, orden de la lista de seleccionados.  
+- Tras la canción: fase de voto **1–5 estrellas** (no sí/no). El cantante no vota. Hace falta al menos 1 voto de un no-cantante (o el host, si no hay otros).  
+- Puntos: **suma de estrellas** de esa ronda (entero, comparable). Alternativa aceptable: promedio × 10 redondeado. Elige una, tests, copy en UI (“Cada estrella suma 1 punto”).  
+- `lastResult` booleano no sirve; guarda `lastStars: number | null` (promedio o suma, coherente con lo que muestras) y en Score enseña las estrellas de esa ronda + marcador acumulado.  
+- `votes`: hoy `Record<string, boolean>`. Extiende a `Record<string, number>` (1–5) **o** un campo paralelo `starVotes` para no romper individual/relay. Preferible campo paralelo si el sí/no de relevo se mantiene intacto.  
+- Individual y relay **no cambian** su voto sí/no ni el +1 del apagón.
+
+**UI:**
+
+- Lobby: tercer modo «Karaoke por turnos» junto a Relevo / Individual. Si karaoke está activo, oculta telón de apagón y máscara (no aplican). Muestra selector de cantantes (checkboxes/chips de `state.players`).  
+- Ready/Countdown: “Canta: {nombre}” como hoy.  
+- Playing: letra completa, sin blackout.  
+- Voting: 5 estrellas táctiles en el móvil; el host ve el recuento.  
+- Score: estrellas de la ronda + tabla de puntos.
+
+Tests: modo karaoke no genera `blackout`; solo los no-cantantes votan; puntuación se suma; `planRelay` no se llama.
+
+---
+
+#### 7. Documentación
+
+Actualiza `README.md` y las notas humanas al final de este archivo:
+
+1. Volver a pegar `supabase/schema.sql` (políticas DELETE fuera; columna `genre` si aplica).  
+2. El dueño borra canciones en el dashboard, no en la app.  
+3. Wizard pide género. Canciones viejas = «Otro» / «Sin clasificar».  
+4. Lobby: setlist (género, uploader, excluir temas) + número de rondas.  
+5. Sync: los móviles siguen el playhead del host; si hay delay, no “calibrar 2 s a mano” como solución.  
+6. Modo karaoke: letra visible, estrellas, el host elige quién canta.  
+7. CORS / secrets de Pages: sin cambios respecto a P4.
+
+---
+
+#### Fuera de alcance de P5
+
+- Login/OAuth, roles admin, “solo el autor borra”. El dueño borra en Supabase.  
+- PIN `VITE_LIBRARY_PIN`.  
+- Editor colaborativo del tap-sync.  
+- Re-sincronizar / editar una canción ya subida.  
+- Detectar estribillos repetidos por texto.  
 - Reescribir `planRelay`.  
 - Servidor `apps/server` / modo offline.  
 - Migración automática IndexedDB → nube.  
-- Subir MP3 al repo git.
+- Subir MP3 al repo git.  
+- E2E Playwright.  
+- Reconexión de host si cierra la pestaña.
+
+---
 
 #### Criterios de aceptación
 
-1. Amigo A sube una canción (con estribillo marcado) en su casa. Amigo B abre la app en otro dispositivo, la ve en Home/Lobby, crea sala, suena y la letra sigue los taps.  
-2. Amigo B puede subir otra canción al **mismo** catálogo sin cuenta.  
-3. Borrar una canción (con confirmación) la quita de la lista de todos al refrescar.  
-4. El `Song` guardado tiene ≥1 sección `chorus`, ≥1 `verse` si hay letra fuera del estribillo, y `chorusStart` = inicio del primer chorus.  
-5. Relevo/apagón usan esas secciones (no una sola sección que cubre toda la canción, salvo que el usuario marcara **todas** las líneas como estribillo).  
-6. IndexedDB ya no es necesario para jugar.  
-7. Realtime (crear sala / unirse por código) no se rompe.  
-8. `npm test`, `typecheck`, `lint`, `build:web` en verde. Tests nuevos: ensamblado de secciones/chorus; store cloud mockeable si puedes sin flaky network.
+1. No hay botón de borrar en Home ni Lobby. Un cliente con la anon key **no** puede `DELETE` (política RLS). El dueño sí borra en el dashboard.  
+2. Subir canciones sigue funcionando (INSERT + Storage).  
+3. Wizard exige género de la lista cerrada; la canción nueva aparece filtrable por ese género.  
+4. Host desmarca el uploader del grupo B → esas canciones no salen en el sorteo. Host desmarca 2 temas sueltos → no salen. Pool vacío → no arranca.  
+5. Partida de 3 rondas en relevo: 3 canciones del setlist, puntos se acumulan, al final hay un ganador. «Una más» añade una ronda. «Terminar show» cierra antes.  
+6. Modo karaoke: letra nunca se apaga; host elige cantantes; al terminar, voto 1–5; los puntos de estrellas se suman al marcador. Individual/relay siguen con sí/no.  
+7. Misma canción, 1ª y 2ª reproducción: la letra de los **móviles** sigue el audio de la TV (±~200 ms de red, no ~2 s). El host no publica `playing` antes de que el audio esté sonando.  
+8. Intro/preroll: `getLyricWindow` sigue sin adelantar la primera línea. Tap-sync del wizard sin regresiones.  
+9. Realtime (crear sala / unirse por código) no se rompe.  
+10. `npm test`, `typecheck`, `lint`, `build:web` en verde.
+
+---
 
 #### Dónde vive el código (sugerido)
 
 | Pieza | Dónde |
 |-------|--------|
-| SQL + políticas | `supabase/schema.sql` |
-| Cliente biblioteca | `apps/web/src/songs/cloudSongStore.ts` |
-| Estribillo (estado puro + tests) | `apps/web/src/songs/chorusRanges.ts` (o similar) |
-| Ensamblado Song | `userSong.ts` (extender) |
-| Wizard | `UploadSongWizard.tsx` (paso letra + save cloud) |
-| Audio host | `useHostAudio.ts` |
-| Listados | `App.tsx` Home/Lobby |
-| Schema Song | `packages/shared/src/model.ts` (`audioSource` supabase) |
+| RLS sin DELETE + columna `genre` | `supabase/schema.sql` |
+| Quitar borrado cliente | `App.tsx`, `cloudSongStore.ts` |
+| Playhead + startedAt tras `play()` | `engine.ts`, `useHostAudio.ts`, `App.tsx`, `game.ts` |
+| Enum géneros | `packages/shared` (exportar labels) |
+| Wizard género | `UploadSongWizard.tsx`, `userSong.ts` |
+| Setlist puro + tests | p. ej. `apps/web/src/songs/setlist.ts` |
+| Lobby setlist + rondas | `App.tsx` Lobby |
+| `totalRounds` en config + «Una más» | `model.ts`, `engine.ts`, Score/Finished |
+| Modo karaoke + estrellas | `model.ts`, `engine.ts`, Voting/Score/Lobby |
 
 ---
-
-### ENTREGA SECUNDARIA (si sobra tiempo)
-
-1. Re-sincronizar / editar una canción cloud ya subida (mismo id, overwrite audio opcional).  
-2. Detectar estribillos repetidos por texto igual al primer bloque marcado (sugerir “¿Marcar también las líneas 24–27?”).  
-3. PIN de biblioteca `VITE_LIBRARY_PIN` si no lo hiciste en el núcleo.
-
-### Backlog posterior (no bloquea P4)
-
-- Auth si el grupo deja de ser de confianza.  
-- E2E Playwright.  
-- Reconexión de host si cierra la pestaña.  
-- Recablear `apps/server` offline.  
-- Spoof de `playerId` en join.
 
 ### Restricciones
 
@@ -251,7 +306,9 @@ Actualiza `README.md` y las notas al final de este archivo:
 - No reescribir el planner de relevo/sorpresa.  
 - No añadir dependencias pesadas (cliente Supabase ya está).  
 - No commitear `.env` ni MP3.  
-- Copyright: subidas = responsabilidad del grupo, uso privado de fiesta.
+- Copyright: subidas = responsabilidad del grupo, uso privado de fiesta.  
+- No reintroducir borrado en la app “por si acaso”.  
+- No uses la calibración ±0.5 s como arreglo del delay de 2 s.
 
 ### Verificación
 
@@ -265,24 +322,30 @@ npm run dev
 
 Checklist manual:
 
-1. Humano: aplicar SQL + bucket en el dashboard.  
-2. PC A: Home → Sube tu canción → audio, nombre, letra, **marcar estribillo** (y repetición si aplica) → taps → Probar letra → Guardar (progreso de upload).  
-3. PC B (otro navegador/red): recargar Home → aparece la canción de A, con “subida por …”.  
-4. PC B: crear sala → elegirla → 3-2-1 → audio + letra alineados; intro no muestra la primera línea como actual.  
-5. Modo relevo: hay varios turnos/secciones, no un único bloque.  
-6. Borrar en B → en A al refrescar ya no está.  
-7. Un móvil sigue uniéndose por código (regresión Realtime).  
-8. Canción >12 MB: error claro, no se queda a medias.
+1. Humano: re-pegar SQL (sin DELETE; columna genre).  
+2. Home/Lobby: no hay papelera. Subir una canción nueva **con género** sigue funcionando.  
+3. Intentar borrar por API con la anon key debe fallar (PostgREST 401/403).  
+4. Lobby: filtrar un género, quitar un uploader, desmarcar una canción; Empezar; el sorteo respeta el pool.  
+5. 3 rondas + «Una más» + «Terminar show»; puntos acumulados en el podio.  
+6. Karaoke: elegir 2 cantantes; letra visible; voto de estrellas; el no elegido vota.  
+7. Misma canción dos veces: móviles alineados con la TV (no ~2 s). Calibrar ±0.1 s mueve host y móviles.  
+8. Un móvil se une por código (regresión Realtime).  
+9. Relevo e individual siguen jugables (apagón + sí/no).
 
 ---
 
 ## Notas para el humano (dueño del repo)
 
-0. **P4 no funciona hasta que corras el SQL** en Supabase → SQL Editor y exista el bucket `song-audio` con las políticas del archivo del repo.  
-1. `apps/web/.env` ya tiene `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY`. Los mismos valores están (deben estar) en **Settings → Secrets → Actions** para Pages.  
-2. En Storage, añade el origen de Pages y localhost a CORS si el audio no carga en la fiesta.  
-3. Las canciones que ya subiste **solo en este Chrome** (IndexedDB) **no** pasarán solas a la nube. Tras P4, vuelve a subirlas marcando el estribillo.  
-4. Cualquier amigo con la URL de la app puede subir o borrar: es el diseño colaborativo. Si algún día se abre al público, hará falta Auth.  
-5. Plan gratis de Supabase: ~1 GB de audio; no subáis WAV enormes.  
-6. Fiesta: host en Pages o `localhost`; móviles con internet y el código de sala. El host necesita poder firmar/leer Storage (misma anon key).  
-7. Autoplay: si el navegador bloquea audio, nudge «Reproducir audio» en karaoke.
+0. **P5 ya está en `main`.** Antes de la próxima fiesta, **vuelve a pegar** `supabase/schema.sql` completo en el SQL Editor: quita las políticas `DELETE` de `songs` y `storage.objects`, y añade la columna `genre` (`add column if not exists genre text not null default 'otro'`, ya incluida en el script). Es seguro volver a correrlo aunque ya lo hayas corrido antes.  
+1. `apps/web/.env` y secrets de Actions (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`) no cambian.  
+2. CORS de Storage: Pages (`https://orusuko.github.io` o el origin real) + `http://localhost:5173`.  
+3. **Borrar canciones:** Table Editor (`songs`) + Storage (`song-audio`), borrando la fila y el objeto con el mismo `id`. Ya no se puede desde la app ni con la anon key (RLS lo bloquea tras volver a pegar el SQL).  
+4. Canciones subidas antes de P5 quedan con género `'otro'` (default de la columna nueva) aunque el JSONB tenga `"custom"`; en el setlist salen como «Otro». No se migran a ciegas: re-súbelas o edita el JSONB a mano si quieres reclasificarlas.  
+5. Plan gratis ~1 GB Storage; 12 MB/canción.  
+6. Fiesta: host en Pages o localhost; móviles con internet y el código. El host necesita firmar/leer Storage.  
+7. Autoplay: si el navegador bloquea, nudge «Reproducir audio» durante el countdown (pantalla se queda en "YA" hasta que el audio arranca de verdad); P5 marca `startedAt` **después** de ese `play()`, no antes — así se corrigió el delay de ~2 s reportado.  
+8. Decisión documentada (punto 1 del plan): se dejó `UPDATE` abierto para `anon` en `songs` y `storage.objects` porque `saveCloudSong` usa `upsert` (permite re-subir el MP3 de una canción ya importada sin fallar por conflicto de `id`). Si en el futuro prefieres cerrarlo también, cambia el guardado a `insert` puro.  
+9. **Setlist:** es por sala, no se guarda en Supabase; cada host la arma de nuevo al abrir el lobby (género + quién subió + exclusión de temas sueltos), sobre la biblioteca completa del grupo.  
+10. **Rondas:** el stepper del lobby por defecto llega en **5**; se puede bajar a 1 o subir hasta 12. Al llegar a la última, «Una más» suma una ronda más; «Terminar show» cierra en cualquier momento.  
+11. **Karaoke:** un turno = la canción completa para un cantante (no se parte por estrofas); los puntos de la ronda son la **suma** de las estrellas (1–5) que dé cada votante no-cantante, no un promedio.  
+12. Si algún día vuelve a sentirse desfasado en fiesta real, revisa primero que el host esté reportando el playhead (consola: sin errores de `reportPlayhead`) antes de tocar la calibración manual — la calibración ±0.1/0.5 s es solo ajuste fino, no el arreglo del delay de arranque.

@@ -54,7 +54,7 @@ describe("RoomManager", () => {
     rooms.disconnect(created.code, "host");
   });
 
-  it("en modo individual cuenta una ronda por jugador", () => {
+  it("respeta totalRounds explícito en modo individual", () => {
     const rooms = createTestRooms();
     const created = rooms.create("host", "TV");
     rooms.configure(created.code, "host", {
@@ -63,6 +63,8 @@ describe("RoomManager", () => {
       blackoutDuration: "line",
       mask: "total",
       groupVoting: true,
+      totalRounds: 2,
+      karaokeSingerIds: [],
     });
     rooms.join(created.code, "p1", "Ada");
     rooms.join(created.code, "p2", "Lin");
@@ -80,6 +82,8 @@ describe("RoomManager", () => {
       blackoutDuration: "line",
       mask: "total",
       groupVoting: true,
+      totalRounds: 1,
+      karaokeSingerIds: [],
     });
     rooms.join(state.code, "p1", "Ada");
     rooms.join(state.code, "p2", "Lin");
@@ -209,6 +213,8 @@ describe("RoomManager", () => {
       blackoutDuration: "line",
       mask: "total",
       groupVoting: true,
+      totalRounds: 1,
+      karaokeSingerIds: [],
     });
     rooms.join(created.code, "p1", "Ada");
     rooms.join(created.code, "p2", "Lin");

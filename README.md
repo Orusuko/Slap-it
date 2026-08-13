@@ -50,9 +50,11 @@ internet. La app publicada en GitHub Pages no lo usa ni depende de él.
    - La tabla `songs` (metadata + letra + timings de cada canción subida).
    - El bucket de Storage `song-audio` (privado, límite 12 MB por archivo)
      donde viven los MP3.
-   - Las políticas de RLS que permiten a cualquiera con la anon key leer,
-     subir y borrar canciones (modelo "biblioteca compartida entre amigos de
-     confianza"; sin login).
+   - Las políticas de RLS que permiten a cualquiera con la anon key leer y
+     subir canciones (modelo "biblioteca compartida entre amigos de
+     confianza"; sin login). **Nadie puede borrar** desde la app, ni
+     siquiera quien subió la canción: solo el dueño del proyecto, desde el
+     dashboard de Supabase (ver «Moderar la biblioteca» más abajo).
 4. Ve a **Storage → song-audio → Configuration → CORS** y añade los orígenes
    desde los que se usará la app: `http://localhost:5173` para desarrollo y
    tu URL de GitHub Pages (p. ej. `https://tu-usuario.github.io`) para
@@ -65,8 +67,12 @@ en todo), así que si algo falla puedes pegarlo de nuevo sin duplicar nada.
 ### Sobre la biblioteca de canciones (importante)
 
 - Es **colaborativa y sin login**: cualquiera con la URL de la app puede
-  subir, listar y borrar canciones de la biblioteca del grupo. Es el diseño
-  pensado para un grupo de amigos de confianza, no para uso público.
+  subir y listar canciones de la biblioteca del grupo. Es el diseño pensado
+  para un grupo de amigos de confianza, no para uso público.
+- **Nadie borra desde la app** (P5): ni quien subió la canción ni nadie más
+  ve un botón de borrado. Es a propósito, para que una persona
+  malintencionada no pueda vaciar la biblioteca del grupo. Solo el dueño del
+  proyecto de Supabase puede borrar, y solo desde el dashboard.
 - Los MP3 que suba cada quien son **responsabilidad de esa persona**: úsalo
   para uso privado entre amigos, no para redistribuir música con copyright
   a terceros. El bucket es privado (URLs firmadas, no indexable), pero no es
@@ -74,6 +80,17 @@ en todo), así que si algo falla puedes pegarlo de nuevo sin duplicar nada.
 - El plan gratuito de Supabase incluye **~1 GB de Storage**: con el límite
   de 12 MB por canción alcanza para decenas de temas; evita subir WAV sin
   comprimir.
+
+### Moderar la biblioteca (borrar una canción)
+
+Solo el dueño del proyecto de Supabase puede borrar, desde el dashboard:
+
+1. **Table Editor → `songs`**: busca la fila (por `title`/`artist`) y bórrala.
+2. **Storage → `song-audio`**: borra el objeto cuya key coincide con el `id`
+   de esa canción (mismo valor que la columna `id` de la fila anterior).
+
+No hace falta hacer ambos pasos en un orden estricto, pero hazlos los dos:
+borrar solo la fila deja un MP3 huérfano en Storage (cuenta contra tu cuota).
 
 ## Iniciar en desarrollo
 
@@ -95,10 +112,17 @@ npm run dev
 2. Ready muestra la canción. Si hay audio in-app (catálogo o adjunto), host y
    jugadores lo ven; si no, el host usa Spotify/YouTube al timestamp indicado.
 3. Mientras se comprueba un MP3 del catálogo, el 3-2-1 espera. Luego el host
-   inicia la cuenta; al 0 arranca el audio (si hay) y la letra.
-4. Si el reloj se desfasa, el host recalibra ±0.5 s. Los móviles alinean con
-   `hostNow` del broadcast para no ir muy desfasados respecto a la TV.
-5. Apagón → reveal → voto / host → marcador.
+   inicia la cuenta; al llegar a "YA" con audio in-app, la sala se queda en
+   countdown hasta que `audio.play()` **de verdad** resuelve — así la letra
+   nunca arranca antes que el sonido real (fix del delay reportado en P5).
+   Si el navegador bloquea el autoplay, el host ve un botón para reintentar.
+4. Mientras suena, el host reporta su `audio.currentTime` real cada ~700 ms.
+   Los jugadores derivan su posición de ese playhead (no de su propio reloj
+   de pared), así siguen el altavoz real de la TV incluso si hay drift
+   acumulado en canciones largas o en la segunda ronda de la noche. Si aun
+   así se nota desfasado, el host puede recalibrar ±0.1/0.5 s a mano.
+5. Apagón → reveal → voto / host → marcador (o votación de estrellas en
+   modo karaoke).
 
 ### Modo relevo con sorpresa
 
@@ -122,6 +146,54 @@ El reparto de turnos (`RelayPlan`) lo calcula `packages/shared/src/relay.ts` y
 es puramente una función de la canción y de la lista de jugadores, así que es
 el mismo tanto si la partida corre en `apps/server` como en el navegador del
 host en GitHub Pages.
+
+### Modo karaoke por turnos
+
+Tercer modo (junto a relevo e individual): no hay minijuego de apagón, la
+letra queda **siempre visible**. Pensado para simplemente cantar y que el
+grupo puntúe la interpretación:
+
+1. En el lobby, el host elige (opcional) qué jugador o jugadores cantarán
+   esta noche; si no elige a nadie, cantan todos por turnos en el orden en
+   que entraron a la sala.
+2. Suena la canción con la letra siempre visible para todos; el host corta
+   la interpretación con **«Terminar interpretación»** cuando termina.
+3. El resto del grupo (menos quien cantó) vota de **1 a 5 estrellas**; la
+   suma de estrellas son los puntos de esa ronda para quien cantó.
+
+### Varias rondas por noche
+
+El lobby tiene un selector de **rondas de la noche** (1–12, cualquier modo).
+Los puntos se acumulan ronda a ronda y la canción de cada ronda se sortea de
+nuevo dentro del setlist activo. Al llegar a la última ronda configurada, el
+host puede:
+
+- **Una más**: alarga el show una ronda extra (útil si al grupo se le
+  antoja seguir).
+- **Ver resultado final**: cierra el show y muestra el podio.
+
+También puede **Terminar show** en cualquier ronda intermedia si hace falta
+cortar antes de tiempo.
+
+### Setlist de la noche (género, quién subió, exclusión)
+
+Para que un grupo de amigos no herede canciones que no le gustan a otro
+grupo, el lobby tiene un filtro de setlist sobre la **biblioteca del grupo**
+(las canciones subidas con el wizard; el catálogo embebido del repo no pasa
+por este filtro):
+
+1. **Género** — chips para incluir/excluir géneros (banda, mariachi,
+   ranchera, norteño, cumbia, pop, rock, balada, reggaetón, otro).
+2. **Quién subió** — chips con el nombre de cada persona que haya subido
+   algo; útil para tomar canciones solo de un subgrupo de amigos.
+3. **Catálogo** — dentro de lo que dejan pasar género + uploader, se puede
+   desmarcar canción por canción (p. ej. un tema que le gusta a alguien de
+   otro grupo pero no al resto).
+
+El resultado (género ∩ uploader − exclusiones) es el pool del que se sortea
+cada ronda; también aparece primero en el selector de «Forzar canción». Si
+queda vacío, **Empezar show** avisa y no arranca. La lógica vive en
+`apps/web/src/songs/setlist.ts`.
 
 ### Audio en la app (catálogo o adjunto)
 
@@ -153,8 +225,8 @@ de Supabase, visible para todo el grupo) o añade entradas reales en
 placeholders (`id` con prefijo `placeholder-` o título `PLACEHOLDER — …`),
 esos **no** entran al sorteo de fiesta salvo que no quede otra opción.
 
-El modo por defecto de la sala es **relevo con sorpresa**. El individual
-sigue disponible en la configuración del lobby.
+El modo por defecto de la sala es **relevo con sorpresa**. El individual y
+el karaoke por turnos siguen disponibles en la configuración del lobby.
 
 Si un jugador se desconecta a mitad del relevo y quedan ≥ 2 voces, se
 reasignan los turnos futuros (o se regenera el plan si aún no empezó el

@@ -296,16 +296,6 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
-.home-songs-head button {
-  border: 0;
-  background: transparent;
-  color: var(--pink);
-  font-size: 0.75rem;
-  font-weight: 700;
-  text-transform: none;
-  letter-spacing: 0;
-}
-.home-songs-head button:hover { color: var(--ivory); }
 .home-songs ul { list-style: none; margin: 0; padding: 0; }
 .home-songs li {
   display: flex;
@@ -318,17 +308,6 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .home-songs li span { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .home-songs li strong { font-size: 0.92rem; }
 .home-songs li small { color: var(--muted); font-size: 0.78rem; }
-.home-songs li button {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  flex-shrink: 0;
-  border: 1px solid var(--line);
-  background: transparent;
-  color: var(--muted);
-}
-.home-songs li button:hover { border-color: var(--pink); color: var(--pink); }
 
 .library-status {
   width: min(100%, 480px);
@@ -668,6 +647,79 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 }
 .autoplay-nudge p { margin: 0; color: var(--ivory); font-size: 0.95rem; }
 
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.chip {
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+.chip:hover { border-color: var(--cyan); color: var(--ivory); }
+.chip.is-active {
+  border-color: var(--pink);
+  background: rgba(244, 63, 142, 0.16);
+  color: var(--ivory);
+}
+
+.singer-picker { margin: 0 0 8px; }
+
+.setlist-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 4px 0 16px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  background: rgba(8, 5, 22, 0.35);
+}
+.setlist-group { display: flex; flex-direction: column; gap: 8px; }
+.setlist-group > span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.setlist-songs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+}
+.setlist-songs li + li { border-top: 1px solid var(--line); }
+.setlist-songs label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.setlist-songs label span {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: transparent;
+}
+.setlist-songs label.is-included span { border-color: var(--cyan); color: var(--cyan); }
+.setlist-songs label.is-included { color: var(--ivory); }
+.setlist-songs label strong { font-size: 0.88rem; }
+.setlist-songs label small { color: var(--muted); font-size: 0.78rem; margin-left: 4px; }
+.setlist-songs .helper { padding: 10px 12px; }
+
 .song-pick {
   display: flex;
   flex-direction: column;
@@ -955,7 +1007,23 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 }
 .scoreboard li span { color: var(--pink); font-family: "Roboto Mono", monospace; }
 .scoreboard li b { color: var(--cyan); font-family: "Roboto Mono", monospace; }
-.score-screen > .button, .score-screen > .waiting-copy, .score-screen > .notice { grid-column: 1 / -1; justify-self: center; }
+.score-screen > .button, .score-screen > .score-actions, .score-screen > .waiting-copy, .score-screen > .notice { grid-column: 1 / -1; justify-self: center; }
+.score-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; }
+
+.star-picker { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 32px; }
+.star-picker button {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+}
+.star-picker button:hover { border-color: var(--pink); color: var(--pink); }
+.star-picker button.is-active { border-color: var(--pink); background: rgba(244, 63, 142, 0.16); color: var(--pink); }
+.star-picker .voted-confirmation { flex-basis: 100%; margin-top: 6px; }
 
 .finished-screen h1 { color: var(--pink); text-shadow: var(--shadow-pink); }
 .podium {

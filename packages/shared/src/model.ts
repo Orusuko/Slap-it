@@ -97,12 +97,61 @@ export type Song = z.infer<typeof songSchema>;
 export type SongLine = z.infer<typeof songLineSchema>;
 export type SongSection = z.infer<typeof songSectionSchema>;
 
+/**
+ * Lista cerrada de géneros para el wizard y el setlist del lobby (P5).
+ * `Song.genre` sigue siendo `string` en el schema (no enum) para no romper
+ * canciones/fixtures ya guardadas con valores libres (`"custom"`, `"test"`,
+ * etc.); esos valores legacy se muestran como «Otro» en la UI vía
+ * `genreLabel`. Editar esta lista es el único lugar que hace falta tocar
+ * para agregar/renombrar géneros.
+ */
+export const SONG_GENRES = [
+  "banda",
+  "mariachi",
+  "ranchera",
+  "norteno",
+  "cumbia",
+  "pop",
+  "rock",
+  "balada",
+  "reggaeton",
+  "otro",
+] as const;
+
+export type SongGenre = (typeof SONG_GENRES)[number];
+
+export const SONG_GENRE_LABELS: Record<SongGenre, string> = {
+  banda: "Banda",
+  mariachi: "Mariachi",
+  ranchera: "Ranchera",
+  norteno: "Norteño",
+  cumbia: "Cumbia",
+  pop: "Pop",
+  rock: "Rock",
+  balada: "Balada",
+  reggaeton: "Reggaetón",
+  otro: "Otro",
+};
+
+/** Label legible para cualquier `genre` guardado, incluidos valores legacy fuera de `SONG_GENRES`. */
+export function genreLabel(genre: string): string {
+  return SONG_GENRE_LABELS[genre as SongGenre] ?? SONG_GENRE_LABELS.otro;
+}
+
 export const gameConfigSchema = z.object({
   maxPlayers: z.number().int().min(2).max(8),
-  mode: z.enum(["individual", "relay"]),
+  mode: z.enum(["individual", "relay", "karaoke"]),
   blackoutDuration: z.enum(["line", "section"]),
   mask: z.enum(["total", "partial"]),
   groupVoting: z.boolean(),
+  /** Número de rondas de la noche; aplica a los tres modos (P5). */
+  totalRounds: z.number().int().min(1).max(12).default(1),
+  /**
+   * Jugadores elegidos por el host para cantar en modo `karaoke` (se cicla
+   * por ronda). Vacío = cantan todos los jugadores actuales, en orden de
+   * llegada.
+   */
+  karaokeSingerIds: z.array(z.string()).default([]),
 });
 
 export type GameConfig = z.infer<typeof gameConfigSchema>;
@@ -112,6 +161,8 @@ export const defaultGameConfig: GameConfig = {
   blackoutDuration: "section",
   mask: "total",
   groupVoting: true,
+  totalRounds: 1,
+  karaokeSingerIds: [],
 };
 
 export const playerSchema = z.object({
@@ -186,8 +237,20 @@ export interface RoomPublicState {
   revealEndsAt: number | null;
   /** Ajuste acumulado sobre el tiempo derivado; no modifica startedAt. */
   playbackOffsetMs: number;
+  /**
+   * `audio.currentTime` del host en el instante de `hostNow` (segundos).
+   * `null` mientras no hay audio in-app (fuente externa) o antes de que
+   * arranque `playing`. Los jugadores derivan su posición de aquí en vez del
+   * reloj de pared: `hostPlayhead + (now + clockOffsetMs - hostNow) / 1000`
+   * (ver `getDisplayPosition`). Así siguen el altavoz real de la TV.
+   */
+  hostPlayhead: number | null;
   votes: Record<string, boolean>;
   lastResult: boolean | null;
+  /** Voto de estrellas (1–5) del modo `karaoke`; campo paralelo a `votes` para no tocar sí/no. */
+  starVotes: Record<string, number>;
+  /** Suma de estrellas de la última interpretación en modo `karaoke`; null en otros modos o sin votos. */
+  lastStars: number | null;
   /** Reparto de turnos vigente cuando `config.mode === "relay"`; null en modo individual. */
   relayPlan: RelayPlan | null;
   /** null mientras la partida sigue; se rellena al pasar a `finished`. */

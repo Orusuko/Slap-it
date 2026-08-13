@@ -18,6 +18,8 @@ export interface HostAudio {
   loadCatalog: (song: Song | null) => void;
   clear: () => void;
   playFrom: (seconds: number) => Promise<boolean>;
+  /** Deja el buffer caliente en `seconds` sin reproducir (P5: warm-up durante el countdown). */
+  warmUp: (seconds: number) => void;
   pause: () => void;
   seekBy: (deltaSeconds: number) => void;
   clearNeedsGesture: () => void;
@@ -246,6 +248,16 @@ export function useHostAudio(): HostAudio {
     }
   }, []);
 
+  const warmUp = useCallback((seconds: number) => {
+    const audio = audioRef.current;
+    if (!audio || !audio.src) return;
+    try {
+      audio.currentTime = Math.max(0, seconds);
+    } catch {
+      // Sin metadata cargada todavía: no es crítico, playFrom la fija de nuevo al arrancar.
+    }
+  }, []);
+
   const pause = useCallback(() => {
     audioRef.current?.pause();
   }, []);
@@ -283,6 +295,7 @@ export function useHostAudio(): HostAudio {
       loadCatalog,
       clear,
       playFrom,
+      warmUp,
       pause,
       seekBy,
       clearNeedsGesture,
@@ -297,6 +310,7 @@ export function useHostAudio(): HostAudio {
       loadCatalog,
       clear,
       playFrom,
+      warmUp,
       pause,
       seekBy,
       clearNeedsGesture,

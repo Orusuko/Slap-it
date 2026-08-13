@@ -23,6 +23,8 @@ export interface AssembleUserSongInput {
   chorusLineIndices?: ReadonlySet<number>;
   /** Por defecto `{ type: "user" }`; el wizard pasa `{ type: "supabase", objectKey }`. */
   audioSource?: Song["audioSource"];
+  /** Género de `SONG_GENRES` (P5); por defecto `"otro"` para llamadas que no lo pasan. */
+  genre?: string;
 }
 
 /**
@@ -50,7 +52,7 @@ export function assembleUserSong(input: AssembleUserSongInput): Song {
     title,
     artist,
     duration,
-    genre: "custom",
+    genre: input.genre?.trim() || "otro",
     difficulty: "medium",
     chorusStart,
     sections,

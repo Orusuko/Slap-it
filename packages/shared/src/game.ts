@@ -66,6 +66,33 @@ export function getPlaybackPosition(
   );
 }
 
+/**
+ * Posición de reproducción a mostrar en pantalla (P5: fix de sync).
+ *
+ * - Host: siempre ancla a `audio.currentTime` directo (no pasa por aquí; ver
+ *   `Karaoke` en `App.tsx`), pero si no tiene audio in-app cae al reloj de
+ *   pared igual que un jugador.
+ * - Jugador: si el host está reportando `hostPlayhead` (tiene audio in-app y
+ *   ya arrancó `playing`), deriva del playhead real de la TV en vez del
+ *   reloj de pared — evita el desfase de ~0.5–2 s de la primera reproducción
+ *   con URL firmada y el drift acumulado en canciones largas.
+ * - Si no hay `hostPlayhead` (audio externo tipo Spotify), cae a
+ *   `getPlaybackPosition` (best effort, como antes).
+ */
+export function getDisplayPosition(
+  state: Pick<
+    RoomPublicState,
+    "startPosition" | "startedAt" | "playbackOffsetMs" | "hostPlayhead" | "hostNow"
+  >,
+  now: number,
+  role: "host" | "player",
+): number {
+  if (role === "player" && state.hostPlayhead !== null && state.hostNow !== null) {
+    return Math.max(0, state.hostPlayhead + (now - state.hostNow) / 1_000);
+  }
+  return getPlaybackPosition(state, now);
+}
+
 export function selectStartPosition(
   song: Song,
   blackout: BlackoutSelection,

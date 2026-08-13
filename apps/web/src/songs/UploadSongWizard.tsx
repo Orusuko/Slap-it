@@ -12,7 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
-import { getLyricWindow, type Song } from "@slay-it/shared";
+import { getLyricWindow, SONG_GENRES, SONG_GENRE_LABELS, type Song, type SongGenre } from "@slay-it/shared";
 import { cloudSongExists, getStoredUploaderName, saveCloudSong, setStoredUploaderName } from "./cloudSongStore";
 import { parseLyrics } from "./parseLyrics";
 import {
@@ -50,6 +50,7 @@ export function UploadSongWizard({
 
   const [title, setTitle] = useState("");
   const [artist, setArtist] = useState("");
+  const [genre, setGenre] = useState<SongGenre>("otro");
   const [uploaderName, setUploaderName] = useState(() => getStoredUploaderName());
   const [file, setFile] = useState<File | null>(null);
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
@@ -240,6 +241,7 @@ export function UploadSongWizard({
         lines: songLines,
         chorusLineIndices: chorusLines,
         audioSource: { type: "supabase", objectKey: id },
+        genre,
       });
 
       const alreadyExists = await cloudSongExists(title, artist).catch(() => false);
@@ -306,6 +308,16 @@ export function UploadSongWizard({
             <div className="field">
               <label htmlFor="song-artist">Artista</label>
               <input id="song-artist" value={artist} onChange={(e) => setArtist(e.target.value)} placeholder="Ej. Grupo o solista" maxLength={80} />
+            </div>
+            <div className="field">
+              <label htmlFor="song-genre">Género</label>
+              <select id="song-genre" value={genre} onChange={(e) => setGenre(e.target.value as SongGenre)}>
+                {SONG_GENRES.map((value) => (
+                  <option key={value} value={value}>
+                    {SONG_GENRE_LABELS[value]}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="field">
               <label htmlFor="song-uploader">Tu nombre</label>

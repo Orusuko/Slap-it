@@ -22,6 +22,13 @@ interface Room {
   usedSongIds: string[];
   timer?: ReturnType<typeof setTimeout>;
   turnTimers: ReturnType<typeof setTimeout>[];
+  /**
+   * Setlist de esta sala (P5): subconjunto de ids elegido por el host en el
+   * lobby (género ∩ uploader − excluidas). `null` = sin restricción, usa
+   * todo lo registrado. No vive en `state` porque es solo del host: no hace
+   * falta broadcastearlo a los jugadores.
+   */
+  setlistSongIds: string[] | null;
 }
 
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ";
@@ -87,6 +94,24 @@ export class RoomManager {
     return demoSongs.find((item) => item.id === id) ?? this.externalSongs.get(id);
   }
 
+  /**
+   * Setlist de la noche (P5): restringe el sorteo a estos ids. `null` o
+   * vacío quita la restricción (usa todo el catálogo + registradas). Solo
+   * se puede ajustar desde el lobby.
+   */
+  setSetlist(code: string, actorId: string, songIds: string[] | null): void {
+    const room = this.requireHost(code, actorId);
+    if (room.state.phase !== "lobby") throw new Error("Solo se ajusta el setlist desde el lobby");
+    room.setlistSongIds = songIds && songIds.length > 0 ? songIds : null;
+  }
+
+  private poolFor(room: Room): Song[] {
+    const all = [...demoSongs, ...this.externalSongs.values()];
+    if (!room.setlistSongIds) return all;
+    const allowed = new Set(room.setlistSongIds);
+    return all.filter((song) => allowed.has(song.id));
+  }
+
   create(hostId: string, _name: string): RoomPublicState {
     const code = this.createCode();
     const state: RoomPublicState = {
@@ -106,15 +131,18 @@ export class RoomManager {
       startedAt: null,
       revealEndsAt: null,
       playbackOffsetMs: 0,
+      hostPlayhead: null,
       votes: {},
       lastResult: null,
+      starVotes: {},
+      lastStars: null,
       relayPlan: null,
       endReason: null,
       hostHasAudio: false,
       hostNow: null,
       selectedSongId: null,
     };
-    this.rooms.set(code, { state, usedSongIds: [], turnTimers: [] });
+    this.rooms.set(code, { state, usedSongIds: [], turnTimers: [], setlistSongIds: null });
     return state;
   }
 
@@ -174,9 +202,11 @@ export class RoomManager {
     const room = this.requireHost(code, actorId);
     if (room.state.phase !== "lobby") throw new Error("La partida ya comenzó");
     if (room.state.players.length < 2) throw new Error("Se necesitan al menos 2 jugadores");
+    if (this.poolFor(room).length === 0) {
+      throw new Error("El setlist está vacío. Incluye al menos una canción.");
+    }
     room.state.round = 0;
-    room.state.totalRounds =
-      room.state.config.mode === "individual" ? room.state.players.length : 1;
+    room.state.totalRounds = room.state.config.totalRounds;
     this.prepareRound(room);
   }
 
@@ -188,16 +218,71 @@ export class RoomManager {
     state.countdownEndsAt = Date.now() + 3_000;
     this.publish(room);
     this.setTimer(room, 3_000, () => {
-      state.phase = "playing";
       state.countdownEndsAt = null;
-      state.startedAt = Date.now();
-      if (state.relayPlan) {
-        state.activeTurnIndex = state.relayPlan.turns[0]?.index ?? 0;
+      if (!state.hostHasAudio) {
+        // Audio externo (Spotify/YouTube manejado a mano): no hay `play()`
+        // que esperar, el 3-2-1 sigue marcando el arranque como antes.
+        this.beginPlayback(room, Date.now(), null);
+        return;
       }
+      // Con audio in-app: el 3-2-1 visual llega a "YA" pero la fase se queda
+      // en "countdown" hasta que el host confirme que el audio arrancó de
+      // verdad (`hostConfirmPlaybackStarted`). Evita marcar `startedAt`
+      // antes de que `playFrom()` resuelva (bug de sync de P5).
       this.publish(room);
+    });
+  }
+
+  /**
+   * El host llama esto justo después de que `audio.play()` resuelve (o tras
+   * el evento `playing`). Único punto donde se fija `startedAt`: así los
+   * jugadores, que derivan su posición de `startedAt`/`hostPlayhead`, nunca
+   * van por delante del audio real que suena en la TV.
+   */
+  hostConfirmPlaybackStarted(code: string, actorId: string, audioPositionSeconds: number): void {
+    const room = this.rooms.get(code.toUpperCase());
+    if (!room || room.state.hostId !== actorId) return;
+    if (room.state.phase !== "countdown" || room.state.countdownEndsAt !== null) return;
+    this.beginPlayback(room, Date.now(), audioPositionSeconds);
+  }
+
+  /**
+   * Reporte periódico del playhead real del host (P5). Actualiza
+   * `hostPlayhead`/`hostNow` para que los jugadores sigan el altavoz de la
+   * TV en vez del reloj de pared, y corrige drift acumulado sobre
+   * `playbackOffsetMs` (reagenda turnos/blackout) si se desvía más de
+   * ~150 ms. No lanza errores: se llama en un intervalo, no como acción de
+   * usuario.
+   */
+  reportPlayhead(code: string, actorId: string, audioPositionSeconds: number): void {
+    const room = this.rooms.get(code.toUpperCase());
+    if (!room || room.state.hostId !== actorId) return;
+    const state = room.state;
+    if (state.phase !== "playing" || state.startedAt === null) return;
+    state.hostPlayhead = audioPositionSeconds;
+    const expected = getPlaybackPosition(state);
+    const deltaMs = (audioPositionSeconds - expected) * 1_000;
+    if (Math.abs(deltaMs) >= 150) {
+      state.playbackOffsetMs += deltaMs;
+      this.syncActiveTurn(room);
       this.scheduleTurnAdvances(room);
       this.scheduleBlackoutEnd(room);
-    });
+    }
+    this.publish(room);
+  }
+
+  private beginPlayback(room: Room, startedAt: number, audioPositionSeconds: number | null): void {
+    const state = room.state;
+    state.phase = "playing";
+    state.countdownEndsAt = null;
+    state.startedAt = startedAt;
+    state.hostPlayhead = audioPositionSeconds;
+    if (state.relayPlan) {
+      state.activeTurnIndex = state.relayPlan.turns[0]?.index ?? 0;
+    }
+    this.publish(room);
+    this.scheduleTurnAdvances(room);
+    this.scheduleBlackoutEnd(room);
   }
 
   continue(code: string, actorId: string): void {
@@ -213,8 +298,33 @@ export class RoomManager {
     this.prepareRound(room);
   }
 
+  /** «Una más» (P5): alarga la noche una ronda extra y la prepara de inmediato. */
+  extendRound(code: string, actorId: string): void {
+    const room = this.requireHost(code, actorId);
+    if (room.state.phase !== "score") throw new Error("Ahora no se puede alargar la partida");
+    if (this.poolFor(room).length === 0) {
+      throw new Error("El setlist está vacío. Incluye al menos una canción.");
+    }
+    room.state.totalRounds += 1;
+    room.state.round += 1;
+    this.prepareRound(room);
+  }
+
+  /** «Terminar show» (P5): cierra el show ahora mismo, aunque falten rondas planeadas. */
+  finishShow(code: string, actorId: string): void {
+    const room = this.requireHost(code, actorId);
+    if (room.state.phase !== "score") throw new Error("Solo se puede terminar el show desde el marcador");
+    this.clearAllTimers(room);
+    room.state.phase = "finished";
+    room.state.endReason = "completed";
+    this.publish(room);
+  }
+
   vote(code: string, playerId: string, yes: boolean): void {
     const room = this.requireRoom(code);
+    if (room.state.config.mode === "karaoke") {
+      throw new Error("Esta partida usa voto de estrellas");
+    }
     if (room.state.phase !== "voting") throw new Error("La votación no está abierta");
     if (room.state.singerId === playerId) throw new Error("El cantante no puede votar");
     if (!room.state.players.some((player) => player.id === playerId)) {
@@ -230,6 +340,63 @@ export class RoomManager {
     if (yesVotes > eligible / 2 || noVotes >= eligible / 2 || values.length >= eligible) {
       this.resolve(room, resolveMajority(room.state.votes));
     }
+  }
+
+  /** Voto de estrellas (1–5) del modo karaoke; el cantante de la ronda no vota. */
+  voteStars(code: string, playerId: string, stars: number): void {
+    const room = this.requireRoom(code);
+    if (room.state.config.mode !== "karaoke") {
+      throw new Error("El voto de estrellas solo aplica en modo karaoke");
+    }
+    if (room.state.phase !== "voting") throw new Error("La votación no está abierta");
+    if (room.state.singerId === playerId) throw new Error("Quien canta no puede votar");
+    if (!room.state.players.some((player) => player.id === playerId)) {
+      throw new Error("No perteneces a esta sala");
+    }
+    if (!Number.isInteger(stars) || stars < 1 || stars > 5) {
+      throw new Error("La puntuación debe ser de 1 a 5 estrellas");
+    }
+    room.state.starVotes[playerId] = stars;
+    this.publish(room);
+
+    const eligible = room.state.players.filter(({ id }) => id !== room.state.singerId).length;
+    if (eligible > 0 && Object.keys(room.state.starVotes).length >= eligible) {
+      this.resolveKaraoke(room);
+    }
+  }
+
+  /** El host cierra la votación de karaoke ya mismo (p. ej. alguien se ausentó y nunca vota). */
+  closeKaraokeVoting(code: string, actorId: string): void {
+    const room = this.requireHost(code, actorId);
+    if (room.state.config.mode !== "karaoke" || room.state.phase !== "voting") {
+      throw new Error("No hay una votación de karaoke abierta");
+    }
+    this.resolveKaraoke(room);
+  }
+
+  /** Fin de la interpretación (P5, modo karaoke): no hay apagón que dispare esto solo; lo corta el host. */
+  endKaraokeTurn(code: string, actorId: string): void {
+    const room = this.requireHost(code, actorId);
+    if (room.state.config.mode !== "karaoke") throw new Error("Solo aplica en modo karaoke");
+    if (room.state.phase !== "playing") throw new Error("La interpretación no está en curso");
+    this.clearAllTimers(room);
+    room.state.phase = "voting";
+    room.state.starVotes = {};
+    this.publish(room);
+  }
+
+  private resolveKaraoke(room: Room): void {
+    this.clearAllTimers(room);
+    const values = Object.values(room.state.starVotes);
+    const total = values.reduce((sum, value) => sum + value, 0);
+    room.state.lastStars = values.length > 0 ? total : null;
+    if (room.state.singerId && values.length > 0) {
+      const singer = room.state.players.find(({ id }) => id === room.state.singerId);
+      if (singer) singer.score += total;
+    }
+    room.state.lastResult = values.length > 0 ? total >= values.length * 3 : null;
+    room.state.phase = "score";
+    this.publish(room);
   }
 
   resolveManually(code: string, actorId: string, correct: boolean): void {
@@ -267,6 +434,7 @@ export class RoomManager {
     const leftWasSinger = room.state.singerId === playerId;
     room.state.players = room.state.players.filter((player) => player.id !== playerId);
     delete room.state.votes[playerId];
+    delete room.state.starVotes[playerId];
 
     if (
       room.state.config.mode === "relay" &&
@@ -274,6 +442,11 @@ export class RoomManager {
       ACTIVE_RELAY_PHASES.has(room.state.phase)
     ) {
       this.handleRelayPlayerLeft(room);
+      return false;
+    }
+
+    if (room.state.config.mode === "karaoke" && ACTIVE_ROUND_PHASES.has(room.state.phase)) {
+      this.handleIndividualPlayerLeft(room, leftWasSinger, { karaoke: true });
       return false;
     }
 
@@ -286,7 +459,11 @@ export class RoomManager {
     return false;
   }
 
-  private handleIndividualPlayerLeft(room: Room, leftWasSinger: boolean): void {
+  private handleIndividualPlayerLeft(
+    room: Room,
+    leftWasSinger: boolean,
+    options: { karaoke?: boolean } = {},
+  ): void {
     const state = room.state;
     if (state.players.length < 2) {
       this.clearAllTimers(room);
@@ -303,9 +480,10 @@ export class RoomManager {
       return;
     }
 
-    // El cantante de la ronda se fue: saltamos al marcador sin punto.
+    // El cantante de la ronda se fue: saltamos al marcador sin punto (ni estrellas).
     this.clearAllTimers(room);
-    state.lastResult = false;
+    state.lastResult = options.karaoke ? null : false;
+    state.lastStars = null;
     state.phase = "score";
     state.countdownEndsAt = null;
     state.revealEndsAt = null;
@@ -343,13 +521,12 @@ export class RoomManager {
         this.clearAllTimers(room);
         state.countdownEndsAt = Date.now() + 3_000;
         this.setTimer(room, 3_000, () => {
-          state.phase = "playing";
           state.countdownEndsAt = null;
-          state.startedAt = Date.now();
-          state.activeTurnIndex = state.relayPlan?.turns[0]?.index ?? 0;
+          if (!state.hostHasAudio) {
+            this.beginPlayback(room, Date.now(), null);
+            return;
+          }
           this.publish(room);
-          this.scheduleTurnAdvances(room);
-          this.scheduleBlackoutEnd(room);
         });
       }
       this.publish(room);
@@ -386,6 +563,13 @@ export class RoomManager {
     }
   }
 
+  /** Cantantes elegibles del modo karaoke: filtra elegidos que ya no están en la sala. */
+  private karaokeSingersFor(room: Room): string[] {
+    const ids = room.state.players.map((player) => player.id);
+    const chosen = room.state.config.karaokeSingerIds.filter((id) => ids.includes(id));
+    return chosen.length > 0 ? chosen : ids;
+  }
+
   private prepareRound(room: Room): void {
     const state = room.state;
     const picked =
@@ -393,7 +577,7 @@ export class RoomManager {
     state.song =
       picked && !isPlaceholderSong(picked)
         ? picked
-        : selectSong([...demoSongs, ...this.externalSongs.values()], room.usedSongIds);
+        : selectSong(this.poolFor(room), room.usedSongIds);
     if (!room.usedSongIds.includes(state.song.id)) room.usedSongIds.push(state.song.id);
     // Tras la primera ronda vuelve el sorteo salvo que el host vuelva a elegir en lobby.
     state.selectedSongId = null;
@@ -406,12 +590,22 @@ export class RoomManager {
           state.players.map(({ id }) => id),
         ),
       );
+    } else if (state.config.mode === "karaoke") {
+      state.relayPlan = null;
+      state.activeTurnIndex = null;
+      state.blackout = null;
+      state.startPosition = 0;
+      const singers = this.karaokeSingersFor(room);
+      state.singerId = singers[state.round % Math.max(1, singers.length)] ?? null;
     } else {
       state.relayPlan = null;
       state.activeTurnIndex = null;
       state.blackout = selectBlackout(state.song, state.config.blackoutDuration);
       state.startPosition = selectStartPosition(state.song, state.blackout);
-      state.singerId = state.players[state.round]?.id ?? state.players[0]?.id ?? null;
+      state.singerId =
+        state.players[state.round % Math.max(1, state.players.length)]?.id ??
+        state.players[0]?.id ??
+        null;
     }
 
     state.phase = "ready";
@@ -419,8 +613,11 @@ export class RoomManager {
     state.startedAt = null;
     state.revealEndsAt = null;
     state.playbackOffsetMs = 0;
+    state.hostPlayhead = null;
     state.votes = {};
     state.lastResult = null;
+    state.starVotes = {};
+    state.lastStars = null;
     state.endReason = null;
     this.publish(room);
   }

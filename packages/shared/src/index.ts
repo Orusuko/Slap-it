@@ -5,3 +5,4 @@ export * from "./model.js";
 export * from "./relay.js";
 export * from "./rules.js";
 export * from "./socket.js";
+export * from "./testFixtures.js";

@@ -22,6 +22,7 @@ interface SongRow {
   uploaded_by: string;
   song: unknown;
   created_at: string;
+  genre?: string;
 }
 
 function rowToRecord(row: SongRow): CloudSongRecord | null {
@@ -35,7 +36,7 @@ export async function listCloudSongs(): Promise<CloudSongRecord[]> {
   const client = getSupabaseClient();
   const { data, error } = await client
     .from(TABLE)
-    .select("id,title,artist,duration,uploaded_by,song,created_at")
+    .select("id,title,artist,duration,uploaded_by,song,created_at,genre")
     .order("created_at", { ascending: false });
   if (error) throw new Error(error.message);
   return ((data ?? []) as SongRow[])
@@ -91,6 +92,7 @@ export async function saveCloudSong(
     artist: song.artist,
     duration: song.duration,
     uploaded_by: uploadedBy.trim() || "Anónimo",
+    genre: song.genre,
     song,
   };
   const { error } = await client.from(TABLE).upsert(row);
@@ -100,13 +102,10 @@ export async function saveCloudSong(
   }
 }
 
-/** Borra la fila y el audio de la biblioteca (irreversible para todo el grupo). */
-export async function deleteCloudSong(id: string): Promise<void> {
-  const client = getSupabaseClient();
-  const { error } = await client.from(TABLE).delete().eq("id", id);
-  if (error) throw new Error(error.message);
-  await client.storage.from(BUCKET).remove([id]).catch(() => {});
-}
+// Sin `deleteCloudSong` a propósito (P5): nadie borra canciones desde la
+// app. La anon key va en el bundle público, así que el borrado se cerró
+// también en RLS (`supabase/schema.sql`). El dueño del proyecto borra filas
+// en Table Editor y objetos en Storage desde el dashboard de Supabase.
 
 /** URL firmada temporal (≈1h) para reproducir el audio de una canción de la biblioteca. */
 export async function getCloudAudioUrl(

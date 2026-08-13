@@ -17,7 +17,7 @@ import {
   RotateCcw,
   Settings2,
   Sparkles,
-  Trash2,
+  Star,
   Trophy,
   Upload,
   Users,
@@ -38,7 +38,9 @@ import {
 import {
   demoSongs,
   formatTurnSectionsLabel,
+  genreLabel,
   getCurrentTurn,
+  getDisplayPosition,
   getLyricWindow,
   getNextVisibleTurn,
   getPlaybackPosition,
@@ -62,13 +64,19 @@ import {
   type PlayerChannel,
 } from "./realtime/roomChannel";
 import {
-  deleteCloudSong,
   getStoredUploaderName,
   listCloudSongs,
   saveCloudSong,
   setStoredUploaderName,
   type CloudSongRecord,
 } from "./songs/cloudSongStore";
+import {
+  buildSetlist,
+  defaultSetlistFilter,
+  distinctGenres,
+  distinctUploaders,
+  type SetlistFilter,
+} from "./songs/setlist";
 import { downloadUserSongJson, parseUserSongJson } from "./songs/songExport";
 import { UploadSongWizard } from "./songs/UploadSongWizard";
 
@@ -183,7 +191,6 @@ function Home({
   onCreate,
   onJoin,
   onOpenUpload,
-  onDeleteSong,
 }: {
   busyJoin: boolean;
   error: string;
@@ -193,7 +200,6 @@ function Home({
   onCreate: () => void;
   onJoin: (name: string, code: string) => void;
   onOpenUpload: () => void;
-  onDeleteSong: (songId: string, title: string) => void;
 }) {
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
@@ -236,14 +242,16 @@ function Home({
                 <li key={song.id}>
                   <span>
                     <strong>{song.title}</strong>
-                    <small>{song.artist} · subida por {uploadedBy}</small>
+                    <small>
+                      {song.artist} · {genreLabel(song.genre)} · subida por {uploadedBy}
+                    </small>
                   </span>
-                  <button type="button" onClick={() => onDeleteSong(song.id, song.title)} aria-label={`Eliminar ${song.title}`}>
-                    <Trash2 size={15} />
-                  </button>
                 </li>
               ))}
             </ul>
+            <p className="library-status">
+              Solo lectura: si algo sobra, pídele al dueño del grupo que lo borre desde Supabase.
+            </p>
           </div>
         )}
         {!libraryLoading && !libraryError && librarySongs.length === 0 && (
@@ -338,10 +346,10 @@ function Lobby({
   pendingImportSong,
   onConfig,
   onSelectSong,
+  onSetlist,
   onStart,
   onOpenUpload,
   onExportSong,
-  onDeleteSong,
   onImportJsonFile,
   onImportAudioFile,
   onCancelImport,
@@ -355,10 +363,11 @@ function Lobby({
   pendingImportSong: Song | null;
   onConfig: (config: GameConfig) => void;
   onSelectSong: (songId: string | null) => void;
+  /** Ids resultantes del setlist actual (P5); `null` = sin restricción. */
+  onSetlist: (songIds: string[] | null) => void;
   onStart: (config: GameConfig) => void;
   onOpenUpload: () => void;
   onExportSong: (songId: string) => void;
-  onDeleteSong: (songId: string, title: string) => void;
   onImportJsonFile: (file: File) => void;
   onImportAudioFile: (file: File) => void;
   onCancelImport: () => void;
@@ -368,6 +377,62 @@ function Lobby({
 
   const patchConfig = <K extends keyof GameConfig>(key: K, value: GameConfig[K]) =>
     setConfig((current) => ({ ...current, [key]: value }));
+
+  const [setlistFilter, setSetlistFilter] = useState<SetlistFilter>(defaultSetlistFilter());
+  const setlistRecords = useMemo(
+    () => librarySongs.map(({ song, uploadedBy }) => ({ song, uploadedBy })),
+    [librarySongs],
+  );
+  const genres = useMemo(() => distinctGenres(setlistRecords), [setlistRecords]);
+  const uploaders = useMemo(() => distinctUploaders(setlistRecords), [setlistRecords]);
+  // Recorte por género/uploader antes de excluir canciones sueltas: es la lista que ve el toggle por tema.
+  const genreAndUploaderFilter = useMemo<SetlistFilter>(
+    () => ({ ...setlistFilter, excludedIds: new Set() }),
+    [setlistFilter],
+  );
+  const candidateSongs = useMemo(
+    () => buildSetlist(setlistRecords, genreAndUploaderFilter),
+    [setlistRecords, genreAndUploaderFilter],
+  );
+  const setlistSongs = useMemo(
+    () => buildSetlist(setlistRecords, setlistFilter),
+    [setlistRecords, setlistFilter],
+  );
+  const setlistIds = useMemo(() => setlistSongs.map((song) => song.id), [setlistSongs]);
+
+  // El host solo arma el setlist; se manda al motor apenas cambia, no hace
+  // falta esperar a "Empezar show" (así el sorteo de la primera ronda ya lo respeta).
+  useEffect(() => {
+    onSetlist(librarySongs.length > 0 ? setlistIds : null);
+  }, [onSetlist, setlistIds, librarySongs.length]);
+
+  const toggleInSet = (current: "all" | ReadonlySet<string>, value: string, allValues: string[]): "all" | Set<string> => {
+    const base = current === "all" ? new Set(allValues) : new Set(current);
+    if (base.has(value)) base.delete(value);
+    else base.add(value);
+    return base.size >= allValues.length ? "all" : base;
+  };
+
+  const isGenreActive = (genre: string) => setlistFilter.genres === "all" || setlistFilter.genres.has(genre);
+  const isUploaderActive = (name: string) => setlistFilter.uploaders === "all" || setlistFilter.uploaders.has(name);
+
+  const toggleSong = (songId: string) => {
+    setSetlistFilter((current) => {
+      const next = new Set(current.excludedIds);
+      if (next.has(songId)) next.delete(songId);
+      else next.add(songId);
+      return { ...current, excludedIds: next };
+    });
+  };
+
+  const toggleSinger = (playerId: string) => {
+    patchConfig(
+      "karaokeSingerIds",
+      config.karaokeSingerIds.includes(playerId)
+        ? config.karaokeSingerIds.filter((id) => id !== playerId)
+        : [...config.karaokeSingerIds, playerId],
+    );
+  };
 
   return (
     <div className="lobby">
@@ -412,17 +477,27 @@ function Lobby({
                 <button type="button" aria-label="Aumentar máximo" onClick={() => patchConfig("maxPlayers", Math.min(8, config.maxPlayers + 1))}><Plus /></button>
               </div>
             </fieldset>
+            <fieldset>
+              <legend>Rondas de la noche</legend>
+              <div className="number-stepper">
+                <button type="button" aria-label="Reducir rondas" onClick={() => patchConfig("totalRounds", Math.max(1, config.totalRounds - 1))}><Minus /></button>
+                <output>{config.totalRounds}</output>
+                <button type="button" aria-label="Aumentar rondas" onClick={() => patchConfig("totalRounds", Math.min(12, config.totalRounds + 1))}><Plus /></button>
+              </div>
+              <p className="config-note">Los puntos se acumulan ronda a ronda; al terminar podrás pedir «Una más».</p>
+            </fieldset>
             <Choice
               legend="Modo de canto"
               value={config.mode}
-              options={[["relay", "Relevo + sorpresa"], ["individual", "Individual"]]}
+              options={[["relay", "Relevo + sorpresa"], ["individual", "Individual"], ["karaoke", "Karaoke por turnos"]]}
               onChange={(value) => patchConfig("mode", value as GameConfig["mode"])}
             />
-            {config.mode === "relay" ? (
+            {config.mode === "relay" && (
               <p className="config-note">
                 En relevo el apagón son 1–2 estrofas al azar tras las vueltas; no se configura por línea.
               </p>
-            ) : (
+            )}
+            {config.mode === "individual" && (
               <Choice
                 legend="Telón de apagón"
                 value={config.blackoutDuration}
@@ -430,26 +505,126 @@ function Lobby({
                 onChange={(value) => patchConfig("blackoutDuration", value as GameConfig["blackoutDuration"])}
               />
             )}
-            <Choice
-              legend="Máscara de letra"
-              value={config.mask}
-              options={[["total", "Total"], ["partial", "Parcial"]]}
-              onChange={(value) => patchConfig("mask", value as GameConfig["mask"])}
-            />
-            <label className="switch-row">
-              <span><Vote size={19} /><span><strong>Voto grupal</strong><small>Los jugadores deciden el resultado</small></span></span>
-              <input type="checkbox" checked={config.groupVoting} onChange={(event) => patchConfig("groupVoting", event.target.checked)} />
-            </label>
+            {config.mode === "karaoke" ? (
+              <fieldset className="singer-picker">
+                <legend>¿Quién canta esta noche?</legend>
+                <p className="config-note">
+                  Letra siempre visible, sin apagón. Los no elegidos se quedan votando con estrellas.
+                  Ninguno elegido = cantan todos, por turnos.
+                </p>
+                <div className="chip-row">
+                  {state.players.map((player) => (
+                    <button
+                      key={player.id}
+                      type="button"
+                      className={`chip ${config.karaokeSingerIds.includes(player.id) ? "is-active" : ""}`}
+                      onClick={() => toggleSinger(player.id)}
+                    >
+                      {player.name}
+                    </button>
+                  ))}
+                  {state.players.length === 0 && <span className="helper">Todavía no hay jugadores.</span>}
+                </div>
+              </fieldset>
+            ) : (
+              <>
+                <Choice
+                  legend="Máscara de letra"
+                  value={config.mask}
+                  options={[["total", "Total"], ["partial", "Parcial"]]}
+                  onChange={(value) => patchConfig("mask", value as GameConfig["mask"])}
+                />
+                <label className="switch-row">
+                  <span><Vote size={19} /><span><strong>Voto grupal</strong><small>Los jugadores deciden el resultado</small></span></span>
+                  <input type="checkbox" checked={config.groupVoting} onChange={(event) => patchConfig("groupVoting", event.target.checked)} />
+                </label>
+              </>
+            )}
+
+            <div className="setlist-card">
+              <span className="step-label"><ListMusic size={17} /> Setlist de la noche</span>
+              {librarySongs.length === 0 ? (
+                <p className="helper">Sube al menos una canción a la biblioteca para armar el setlist.</p>
+              ) : (
+                <>
+                  <div className="setlist-group">
+                    <span>Géneros</span>
+                    <div className="chip-row">
+                      {genres.map((genre) => (
+                        <button
+                          key={genre}
+                          type="button"
+                          className={`chip ${isGenreActive(genre) ? "is-active" : ""}`}
+                          onClick={() =>
+                            setSetlistFilter((current) => ({
+                              ...current,
+                              genres: toggleInSet(current.genres, genre, genres),
+                            }))
+                          }
+                        >
+                          {genreLabel(genre)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="setlist-group">
+                    <span>Quién subió</span>
+                    <div className="chip-row">
+                      {uploaders.map((name) => (
+                        <button
+                          key={name}
+                          type="button"
+                          className={`chip ${isUploaderActive(name) ? "is-active" : ""}`}
+                          onClick={() =>
+                            setSetlistFilter((current) => ({
+                              ...current,
+                              uploaders: toggleInSet(current.uploaders, name, uploaders),
+                            }))
+                          }
+                        >
+                          {name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="setlist-group">
+                    <span>Catálogo ({setlistSongs.length}/{candidateSongs.length})</span>
+                    <ul className="setlist-songs">
+                      {candidateSongs.map((song) => {
+                        const included = !setlistFilter.excludedIds.has(song.id);
+                        return (
+                          <li key={song.id}>
+                            <label className={included ? "is-included" : ""}>
+                              <input type="checkbox" className="sr-only" checked={included} onChange={() => toggleSong(song.id)} />
+                              <span>{included ? <Check size={14} /> : <X size={14} />}</span>
+                              <strong>{song.title}</strong>
+                              <small>{song.artist}</small>
+                            </label>
+                          </li>
+                        );
+                      })}
+                      {candidateSongs.length === 0 && <li className="helper">Ningún tema con este género/uploader.</li>}
+                    </ul>
+                  </div>
+                  {setlistSongs.length === 0 ? (
+                    <p className="wizard-error">El setlist está vacío. Incluye al menos una canción.</p>
+                  ) : (
+                    <p className="helper">{setlistSongs.length} canción{setlistSongs.length === 1 ? "" : "es"} en el pool de esta noche.</p>
+                  )}
+                </>
+              )}
+            </div>
+
             <label className="song-pick">
-              <span>Canción</span>
+              <span>Forzar canción en la próxima ronda (opcional)</span>
               <select
                 value={state.selectedSongId ?? ""}
                 onChange={(event) => onSelectSong(event.target.value || null)}
               >
-                <option value="">Al azar (catálogo de fiesta)</option>
-                {librarySongs.length > 0 && (
-                  <optgroup label="Biblioteca del grupo">
-                    {librarySongs.map(({ song }) => (
+                <option value="">Al azar (dentro del setlist)</option>
+                {setlistSongs.length > 0 && (
+                  <optgroup label="Setlist de esta noche">
+                    {setlistSongs.map((song) => (
                       <option key={song.id} value={song.id}>
                         {song.title} — {song.artist}
                       </option>
@@ -472,20 +647,9 @@ function Lobby({
                 <Music2 size={15} /> Sube tu canción
               </button>
               {state.selectedSongId && librarySongs.some((record) => record.song.id === state.selectedSongId) && (
-                <>
-                  <button type="button" onClick={() => onExportSong(state.selectedSongId!)}>
-                    <Download size={15} /> Exportar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const record = librarySongs.find((item) => item.song.id === state.selectedSongId);
-                      if (record) onDeleteSong(record.song.id, record.song.title);
-                    }}
-                  >
-                    <Trash2 size={15} /> Eliminar
-                  </button>
-                </>
+                <button type="button" onClick={() => onExportSong(state.selectedSongId!)}>
+                  <Download size={15} /> Exportar
+                </button>
               )}
               {pendingImportSong ? (
                 <div className="song-import-pending">
@@ -544,7 +708,9 @@ function Lobby({
             <p className="mode-chip">
               {state.config.mode === "relay"
                 ? "Modo: relevo con sorpresa — turnos de 1 a 4 estrofas; tras dos vueltas alguien canta a oscuras."
-                : "Modo: individual — cada quien canta su tramo y recibe su apagón."}
+                : state.config.mode === "karaoke"
+                  ? "Modo: karaoke por turnos — letra siempre visible; al terminar, votan con estrellas."
+                  : "Modo: individual — cada quien canta su tramo y recibe su apagón."}
             </p>
             <p>Espera aquí. El anfitrión iniciará cuando estén todas las voces.</p>
           </section>
@@ -596,6 +762,7 @@ function Ready({ state, role, busy, error, onCountdown, hostAudio }: {
   hostAudio: HostAudio;
 }) {
   const isRelay = state.config.mode === "relay";
+  const isKaraoke = state.config.mode === "karaoke";
   const rounds = state.relayPlan?.roundsCompleted ?? 2;
   const audioReady = role === "host" ? hostAudio.hasAudio : state.hostHasAudio;
   const probing = role === "host" && hostAudio.probing;
@@ -644,6 +811,11 @@ function Ready({ state, role, busy, error, onCountdown, hostAudio }: {
           <Sparkles size={16} /> Relevo por turnos de 1 a 4 estrofas. Tras {rounds === 1 ? "una vuelta" : "dos vueltas"} completas, a alguien se le apagará la letra por sorpresa.
         </p>
       )}
+      {isKaraoke && (
+        <p className="relay-hint">
+          <Star size={16} /> Letra siempre visible. Al terminar la canción, el resto vota de 1 a 5 estrellas.
+        </p>
+      )}
       {role === "host" && (
         <div className="audio-attach">
           <label>
@@ -689,14 +861,22 @@ function Ready({ state, role, busy, error, onCountdown, hostAudio }: {
   );
 }
 
-function Countdown({ state, audioReady, clockOffsetMs = 0 }: {
+function Countdown({ state, role, busy, audioReady, hostAudio, onRetryPlayback, clockOffsetMs = 0 }: {
   state: RoomPublicState;
+  role: Exclude<Role, null>;
+  busy: boolean;
   audioReady: boolean;
+  hostAudio: HostAudio;
+  onRetryPlayback: () => void;
   clockOffsetMs?: number;
 }) {
   const now = useClock(true, 50, clockOffsetMs);
   const remaining = Math.max(0, Math.ceil(((state.countdownEndsAt ?? now) - now) / 1000));
   const isRelay = state.config.mode === "relay";
+  // Con audio in-app, al llegar a "YA" el motor espera la confirmación real
+  // de `play()` antes de marcar `playing` (fix de sync P5): puede tardar un
+  // instante (o bloquearse por autoplay) sin que el 3-2-1 avance más.
+  const waitingForAudio = role === "host" && audioReady && state.countdownEndsAt === null;
   return (
     <section className="countdown-screen">
       <span className="step-label"><ListMusic size={18} /> La próxima pista</span>
@@ -712,6 +892,15 @@ function Countdown({ state, audioReady, clockOffsetMs = 0 }: {
         </p>
       </div>
       <output className="countdown-number" aria-live="polite">{remaining || "YA"}</output>
+      {waitingForAudio && hostAudio.needsGesture && (
+        <div className="autoplay-nudge">
+          <p>El navegador bloqueó el audio. Pulsa para arrancar la pista.</p>
+          <ActionButton busy={busy} onClick={onRetryPlayback}>Reproducir audio</ActionButton>
+        </div>
+      )}
+      {waitingForAudio && !hostAudio.needsGesture && (
+        <p className="waiting-copy">Arrancando el audio…</p>
+      )}
       <p className="singer-call">
         <Mic2 /> {isRelay ? "Empieza" : "Canta"}: <strong>{playerName(state, openingPlayerId(state))}</strong>
       </p>
@@ -719,12 +908,13 @@ function Countdown({ state, audioReady, clockOffsetMs = 0 }: {
   );
 }
 
-function Karaoke({ state, role, busy, error, onRecalibrate, hostAudio, clockOffsetMs = 0 }: {
+function Karaoke({ state, role, busy, error, onRecalibrate, onEndKaraokeTurn, hostAudio, clockOffsetMs = 0 }: {
   state: RoomPublicState;
   role: Exclude<Role, null>;
   busy: boolean;
   error: string;
   onRecalibrate: (delta: number) => void;
+  onEndKaraokeTurn: () => void;
   hostAudio: HostAudio;
   clockOffsetMs?: number;
 }) {
@@ -734,9 +924,11 @@ function Karaoke({ state, role, busy, error, onRecalibrate, hostAudio, clockOffs
 
   // El host ancla la letra a `audio.currentTime` (fuente real de verdad):
   // evita drift del reloj de pared frente al audio que realmente se oye.
-  // Los jugadores siguen derivando la posición de `hostNow` + offset.
+  // Los jugadores siguen el playhead que reporta el host (P5), no su propio
+  // reloj de pared: así la letra sigue al altavoz real de la TV.
   const hostAudioPosition = role === "host" ? hostAudio.getCurrentTime() : null;
-  const position = hostAudioPosition ?? getPlaybackPosition(state, now);
+  const position = hostAudioPosition ?? getDisplayPosition(state, now, role);
+  const isKaraoke = state.config.mode === "karaoke";
   const { previous, current, next } = getLyricWindow(song, position);
   const blackoutWindow = Boolean(
     state.blackout && position >= state.blackout.start && position < state.blackout.end,
@@ -813,6 +1005,11 @@ function Karaoke({ state, role, busy, error, onRecalibrate, hostAudio, clockOffs
           </ActionButton>
         </div>
       )}
+      {role === "host" && isKaraoke && (
+        <ActionButton busy={busy} onClick={onEndKaraokeTurn}>
+          <Star size={18} /> Terminar interpretación
+        </ActionButton>
+      )}
       {role === "host" && (
         <div className="calibration">
           <span><Gauge size={18} /> Calibración · {formatTime(position)}</span>
@@ -865,18 +1062,63 @@ function Reveal({ state, role, busy, error, onResolve }: {
   );
 }
 
-function Voting({ state, role, clientId, busy, error, onVote }: {
+function Voting({ state, role, clientId, busy, error, onVote, onVoteStars, onCloseKaraokeVoting }: {
   state: RoomPublicState;
   role: Exclude<Role, null>;
   clientId: string;
   busy: boolean;
   error: string;
   onVote: (yes: boolean) => void;
+  onVoteStars: (stars: number) => void;
+  onCloseKaraokeVoting: () => void;
 }) {
+  const isKaraoke = state.config.mode === "karaoke";
   const eligible = Math.max(0, state.players.length - 1);
+  const singer = state.singerId === clientId;
+
+  if (isKaraoke) {
+    const count = Object.keys(state.starVotes).length;
+    const voted = Object.hasOwn(state.starVotes, clientId);
+    const myStars = state.starVotes[clientId] ?? 0;
+    return (
+      <section className="voting-screen">
+        <span className="step-label"><Star size={18} /> Voto de estrellas</span>
+        <h1>¿Cómo estuvo {playerName(state, state.singerId)}?</h1>
+        <p>Cada estrella suma 1 punto. Quien cantó no vota.</p>
+        <div className="vote-progress">
+          <strong>{count}/{eligible}</strong>
+          <span>votos recibidos</span>
+        </div>
+        {role === "host" ? (
+          <ActionButton variant="secondary" busy={busy} onClick={onCloseKaraokeVoting}>
+            Cerrar votación ahora
+          </ActionButton>
+        ) : singer ? (
+          <p className="waiting-copy">Cantaste esta ronda. Espera tus estrellas.</p>
+        ) : (
+          <div className="star-picker">
+            {[1, 2, 3, 4, 5].map((value) => (
+              <button
+                key={value}
+                type="button"
+                className={value <= myStars ? "is-active" : ""}
+                disabled={busy}
+                onClick={() => onVoteStars(value)}
+                aria-label={`${value} estrella${value === 1 ? "" : "s"}`}
+              >
+                <Star size={28} fill={value <= myStars ? "currentColor" : "none"} />
+              </button>
+            ))}
+            {voted && <p className="voted-confirmation"><Check /> {myStars} estrella{myStars === 1 ? "" : "s"} enviadas. Puedes cambiar tu voto.</p>}
+          </div>
+        )}
+        {error && <Notice message={error} />}
+      </section>
+    );
+  }
+
   const count = Object.keys(state.votes).length;
   const voted = Object.hasOwn(state.votes, clientId);
-  const singer = state.singerId === clientId;
   return (
     <section className="voting-screen">
       <span className="step-label"><Vote size={18} /> Veredicto del público</span>
@@ -903,21 +1145,33 @@ function Voting({ state, role, clientId, busy, error, onVote }: {
   );
 }
 
-function Score({ state, role, busy, error, onContinue }: {
+function Score({ state, role, busy, error, onContinue, onExtendRound, onFinishShow }: {
   state: RoomPublicState;
   role: Exclude<Role, null>;
   busy: boolean;
   error: string;
   onContinue: () => void;
+  onExtendRound: () => void;
+  onFinishShow: () => void;
 }) {
+  const isKaraoke = state.config.mode === "karaoke";
   const sorted = [...state.players].sort((a, b) => b.score - a.score);
+  const isLastRound = state.round + 1 >= state.totalRounds;
   return (
     <section className="score-screen">
-      <div className={`result-stamp ${state.lastResult ? "is-hit" : "is-miss"}`}>
-        {state.lastResult ? <Check /> : <X />}
-        <span>{state.lastResult ? "¡Punto!" : "Casi"}</span>
-        <small>{playerName(state, state.singerId)}</small>
-      </div>
+      {isKaraoke ? (
+        <div className="result-stamp is-hit">
+          <Star />
+          <span>{state.lastStars ?? 0} pts</span>
+          <small>{playerName(state, state.singerId)}</small>
+        </div>
+      ) : (
+        <div className={`result-stamp ${state.lastResult ? "is-hit" : "is-miss"}`}>
+          {state.lastResult ? <Check /> : <X />}
+          <span>{state.lastResult ? "¡Punto!" : "Casi"}</span>
+          <small>{playerName(state, state.singerId)}</small>
+        </div>
+      )}
       <div className="scoreboard">
         <span className="step-label"><Trophy size={18} /> Marcador</span>
         <ol>
@@ -927,9 +1181,14 @@ function Score({ state, role, busy, error, onContinue }: {
         </ol>
       </div>
       {role === "host" ? (
-        <ActionButton busy={busy} onClick={onContinue}>
-          {state.round + 1 >= state.totalRounds ? "Ver resultado final" : "Siguiente ronda"} <ArrowRight />
-        </ActionButton>
+        <div className="score-actions">
+          <ActionButton busy={busy} onClick={isLastRound ? onExtendRound : onContinue}>
+            {isLastRound ? "Una más" : "Siguiente ronda"} <ArrowRight />
+          </ActionButton>
+          <ActionButton variant="secondary" busy={busy} onClick={isLastRound ? onContinue : onFinishShow}>
+            {isLastRound ? "Ver resultado final" : "Terminar show"}
+          </ActionButton>
+        </div>
       ) : <p className="waiting-copy">El anfitrión prepara la siguiente ronda.</p>}
       {error && <Notice message={error} />}
     </section>
@@ -1052,20 +1311,71 @@ export default function App() {
     engineRef.current.setHostHasAudio(hostAudio.hasAudio);
   }, [role, hostAudio.hasAudio]);
 
+  // `hostAudio` es un objeto nuevo cada render: lo guardamos en un ref para
+  // poder leerlo desde efectos/intervalos sin que se disparen en cada
+  // publish() de la sala (el mismo problema que ya evita el efecto de abajo).
+  const hostAudioRef = useRef(hostAudio);
+  hostAudioRef.current = hostAudio;
+  const lastCountdownEndsAtRef = useRef<number | null>(null);
+
+  /**
+   * Arranca (o reintenta) el audio del host y, en cuanto `play()` resuelve de
+   * verdad, confirma al motor que la reproducción empezó (P5: fix de sync).
+   * Es el único punto donde se dispara `hostConfirmPlaybackStarted`.
+   */
+  const attemptHostPlayback = useCallback(
+    (fromSeconds: number) => {
+      void hostAudioRef.current.playFrom(fromSeconds).then((started) => {
+        if (!started) return; // needsGesture: el nudge de la UI reintenta con este mismo callback.
+        const position = hostAudioRef.current.getCurrentTime() ?? fromSeconds;
+        engineRef.current?.hostConfirmPlaybackStarted(position);
+      });
+    },
+    [],
+  );
+
   useEffect(() => {
     if (role !== "host" || !state) return;
     const previousPhase = lastPhaseRef.current;
+    const previousCountdownEndsAt = lastCountdownEndsAtRef.current;
     lastPhaseRef.current = state.phase;
-    if (state.phase === "playing" && previousPhase !== "playing") {
-      void hostAudio.playFrom(state.startPosition);
+    lastCountdownEndsAtRef.current = state.countdownEndsAt;
+
+    if (state.phase === "countdown" && previousPhase !== "countdown" && hostAudio.hasAudio) {
+      // Deja el buffer caliente en el punto de arranque mientras corre el 3-2-1.
+      hostAudio.warmUp(state.startPosition);
     }
+
+    // El 3-2-1 visual llegó a "YA": si hay audio in-app, dispara `playFrom`
+    // ahora; el motor no marca `playing` hasta que confirmemos que sonó.
+    const countdownJustFinished =
+      state.phase === "countdown" && state.countdownEndsAt === null && previousCountdownEndsAt !== null;
+    if (countdownJustFinished && state.hostHasAudio) {
+      attemptHostPlayback(state.startPosition);
+    }
+
     if (
       (state.phase === "score" || state.phase === "reveal" || state.phase === "finished") &&
       previousPhase === "playing"
     ) {
       hostAudio.pause();
     }
-  }, [role, state, hostAudio]);
+  }, [role, state, hostAudio, attemptHostPlayback]);
+
+  // Playhead periódico (P5): mientras suena, el host reporta su
+  // `audio.currentTime` real para que los jugadores sigan el altavoz de la
+  // TV en vez de su propio reloj de pared. No depende de `hostAudio`
+  // completo (evitaría reiniciar el intervalo en cada render).
+  useEffect(() => {
+    if (role !== "host" || state?.phase !== "playing") return;
+    const tick = () => {
+      const position = hostAudioRef.current.getCurrentTime();
+      if (position !== null) engineRef.current?.reportPlayhead(position);
+    };
+    tick();
+    const interval = window.setInterval(tick, 700);
+    return () => window.clearInterval(interval);
+  }, [role, state?.phase]);
 
   // Solo al desmontar la app. Depender de `hostAudio` (objeto nuevo cada render)
   // cerraba el canal Realtime al instante y dejaba la sala «Sin conexión».
@@ -1243,25 +1553,12 @@ export default function App() {
     [librarySongs],
   );
 
-  const handleDeleteSong = useCallback(
-    (songId: string, title: string) => {
-      if (!window.confirm(`¿Eliminar "${title}" de la biblioteca? Se borra para todo el grupo.`)) return;
-      setBusy(true);
-      void deleteCloudSong(songId)
-        .then(() => {
-          setBusy(false);
-          refreshLibrarySongs();
-        })
-        .catch((caught: unknown) => {
-          setBusy(false);
-          setError(caught instanceof Error ? caught.message : "No se pudo eliminar la canción.");
-        });
-      if (state?.selectedSongId === songId) {
-        runHostAction(() => engineRef.current?.selectSongChoice(null));
-      }
-    },
-    [refreshLibrarySongs, runHostAction, state?.selectedSongId],
-  );
+  // Sin `handleDeleteSong` a propósito (P5): nadie borra canciones desde la
+  // app (ver `cloudSongStore.ts` y `supabase/schema.sql`).
+
+  const handleSetlist = useCallback((songIds: string[] | null) => {
+    runHostAction(() => engineRef.current?.setSetlist(songIds));
+  }, [runHostAction]);
 
   const handleImportJsonFile = useCallback((file: File) => {
     void file
@@ -1318,6 +1615,21 @@ export default function App() {
     [clientId, sendPlayerCommand],
   );
 
+  const castStarVote = useCallback(
+    (stars: number) => {
+      if (!clientId) return;
+      setBusy(true);
+      setError("");
+      void sendPlayerCommand((requestId) => ({ type: "voteStars", requestId, playerId: clientId, stars })).then(
+        (ack) => {
+          setBusy(false);
+          if (!ack.ok) setError(ack.error);
+        },
+      );
+    },
+    [clientId, sendPlayerCommand],
+  );
+
   const screen = useMemo(() => {
     if (!credentials) return <ConfigMissing />;
     if (!role || !state) {
@@ -1331,7 +1643,6 @@ export default function App() {
           onCreate={createRoom}
           onJoin={joinRoom}
           onOpenUpload={() => setShowUpload(true)}
-          onDeleteSong={handleDeleteSong}
         />
       );
     }
@@ -1348,6 +1659,7 @@ export default function App() {
             pendingImportSong={pendingImportSong}
             onConfig={(config) => runHostAction(() => engineRef.current!.configure(config))}
             onSelectSong={(songId) => runHostAction(() => engineRef.current!.selectSongChoice(songId))}
+            onSetlist={handleSetlist}
             onStart={(config) =>
               runHostAction(() => {
                 engineRef.current!.configure(config);
@@ -1356,7 +1668,6 @@ export default function App() {
             }
             onOpenUpload={() => setShowUpload(true)}
             onExportSong={handleExportSong}
-            onDeleteSong={handleDeleteSong}
             onImportJsonFile={handleImportJsonFile}
             onImportAudioFile={handleImportAudioFile}
             onCancelImport={handleCancelImport}
@@ -1377,7 +1688,11 @@ export default function App() {
         return (
           <Countdown
             state={state}
+            role={role}
+            busy={busy}
             audioReady={state.hostHasAudio}
+            hostAudio={hostAudio}
+            onRetryPlayback={() => attemptHostPlayback(state.startPosition)}
             clockOffsetMs={clockOffsetMs}
           />
         );
@@ -1394,6 +1709,7 @@ export default function App() {
                 hostAudio.seekBy(delta / 1_000);
               })
             }
+            onEndKaraokeTurn={() => runHostAction(() => engineRef.current!.endKaraokeTurn())}
             hostAudio={hostAudio}
             clockOffsetMs={clockOffsetMs}
           />
@@ -1410,7 +1726,16 @@ export default function App() {
         );
       case "voting":
         return (
-          <Voting state={state} role={role} clientId={clientId} busy={busy} error={error} onVote={castVote} />
+          <Voting
+            state={state}
+            role={role}
+            clientId={clientId}
+            busy={busy}
+            error={error}
+            onVote={castVote}
+            onVoteStars={castStarVote}
+            onCloseKaraokeVoting={() => runHostAction(() => engineRef.current!.closeKaraokeVoting())}
+          />
         );
       case "score":
         return (
@@ -1420,13 +1745,17 @@ export default function App() {
             busy={busy}
             error={error}
             onContinue={() => runHostAction(() => engineRef.current!.continueRound())}
+            onExtendRound={() => runHostAction(() => engineRef.current!.extendRound())}
+            onFinishShow={() => runHostAction(() => engineRef.current!.finishShow())}
           />
         );
       case "finished":
         return <Finished state={state} role={role} />;
     }
   }, [
+    attemptHostPlayback,
     busy,
+    castStarVote,
     castVote,
     clientId,
     clockOffsetMs,
@@ -1434,10 +1763,10 @@ export default function App() {
     credentials,
     error,
     handleCancelImport,
-    handleDeleteSong,
     handleExportSong,
     handleImportAudioFile,
     handleImportJsonFile,
+    handleSetlist,
     hostAudio,
     joinRoom,
     libraryError,
