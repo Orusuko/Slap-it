@@ -22,9 +22,10 @@ ningún servidor de por medio:
   **biblioteca de canciones**: cada canción subida con el wizard queda
   disponible para todo el grupo, desde cualquier dispositivo, no solo en el
   navegador de quien la subió.
-- Si el anfitrión cierra la pestaña, la sala se cierra. Si un jugador sale,
-  su historial de esa partida se elimina. La biblioteca de canciones, en
-  cambio, persiste entre partidas.
+- Si el anfitrión **cierra la pestaña**, la sala se cierra. Una **recarga
+  (F5)** en la misma pestaña puede restaurar el show vía
+  `sessionStorage`. Si un jugador sale, su historial de esa partida se
+  elimina. La biblioteca de canciones, en cambio, persiste entre partidas.
 - Como el transporte es Supabase (internet), **ya no es obligatorio estar en
   la misma WiFi**: basta con que todos tengan conexión a internet y el mismo
   código de sala.
@@ -67,7 +68,9 @@ en todo), así que si algo falla puedes pegarlo de nuevo sin duplicar nada.
 Si el proyecto **ya** corrió el schema de P4 (tabla `songs` + bucket
 `song-audio` ya existen), no vuelvas a pegar `schema.sql`: usa
 [`supabase/migration.sql`](supabase/migration.sql), que solo añade la
-columna `genre` y quita las políticas de borrado.
+columna `genre` y quita las políticas de borrado. Después, pega
+[`supabase/migration-p6.sql`](supabase/migration-p6.sql) para cerrar el
+UPDATE anónimo (biblioteca **INSERT-only**).
 
 ### Sobre la biblioteca de canciones (importante)
 
@@ -200,7 +203,7 @@ host puede:
 También puede **Terminar show** en cualquier ronda intermedia si hace falta
 cortar antes de tiempo.
 
-### Setlist de la noche (género, quién subió, exclusión)
+### Setlist de la noche (género, artista, quién subió, exclusión)
 
 Para que un grupo de amigos no herede canciones que no le gustan a otro
 grupo, el lobby tiene un filtro de setlist sobre la **biblioteca del grupo**
@@ -209,16 +212,20 @@ por este filtro):
 
 1. **Género** — chips para incluir/excluir géneros (banda, mariachi,
    ranchera, norteño, cumbia, pop, rock, balada, reggaetón, otro).
-2. **Quién subió** — chips con el nombre de cada persona que haya subido
+2. **Artista** — chips con los artistas distintos de la biblioteca.
+3. **Quién subió** — chips con el nombre de cada persona que haya subido
    algo; útil para tomar canciones solo de un subgrupo de amigos.
-3. **Catálogo** — dentro de lo que dejan pasar género + uploader, se puede
-   desmarcar canción por canción (p. ej. un tema que le gusta a alguien de
-   otro grupo pero no al resto).
+4. **Catálogo** — dentro de lo que dejan pasar género + artista + uploader,
+   se puede desmarcar canción por canción (p. ej. un tema que le gusta a
+   alguien de otro grupo pero no al resto).
 
-El resultado (género ∩ uploader − exclusiones) es el pool del que se sortea
-cada ronda; también aparece primero en el selector de «Forzar canción». Si
-queda vacío, **Empezar show** avisa y no arranca. La lógica vive en
-`apps/web/src/songs/setlist.ts`.
+El resultado (género ∩ artista ∩ uploader − exclusiones) es el pool del que
+se sortea cada ronda; también aparece primero en el selector de «Forzar
+canción». Si queda vacío, **Empezar show** avisa y no arranca. La lógica
+vive en `apps/web/src/songs/setlist.ts`.
+
+En el lobby del anfitrión también hay un **código QR** (y los jugadores
+pueden abrir la app con `?room=XXXX` para prellenar el código).
 
 ### Audio en la app (catálogo o adjunto)
 
@@ -278,6 +285,8 @@ fallida y se pasa al marcador.
 2. En **Settings → Secrets and variables → Actions → Secrets**, crea:
    - `VITE_SUPABASE_URL`
    - `VITE_SUPABASE_ANON_KEY`
+   - (opcional) `VITE_LIBRARY_PIN` — freno de UI al subir canciones; **no**
+     es autenticación real (la anon key sigue en el bundle).
 3. En **Settings → Pages**, en **Build and deployment → Source**, elige
    **GitHub Actions**.
 4. Haz `git push` a la rama `main`. El workflow
@@ -405,6 +414,6 @@ básico).
   la máquina de estados de la partida (`RoomManager`), compartida por
   `apps/web` y `apps/server`
 
-Las salas y puntuaciones no se guardan en ningún disco ni base de datos. Si el
-host se desconecta, la sala se cierra; si un jugador sale, su historial se
-elimina.
+Las salas y puntuaciones no se guardan en Postgres. El host puede
+**restaurar tras F5** con un snapshot en `sessionStorage`; si cierra la
+pestaña, la sala se cierra. Si un jugador sale, su historial se elimina.

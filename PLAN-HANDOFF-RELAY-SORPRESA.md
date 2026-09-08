@@ -1,8 +1,11 @@
 # Plan / Prompt de handoff — Slay It
 
 > Documento listo para pegar a otra IA (p. ej. Claude Opus).  
-> **Estado:** P0 + P1 + P3 + P4 + **P5 hechos** (biblioteca cloud + estribillo + setlist/rondas/karaoke/sync/sin borrado público).  
-> **Pendiente humano:** pegar `supabase/migration.sql` en el SQL Editor de Supabase (solo columna `genre` + quitar políticas `DELETE`). Sin esto, P5 no queda activo en producción aunque el código ya esté desplegado.
+> **Estado:** P0 + P1 + P3 + P4 + **P5 hechos** + **modo Adivina la canción (guess) hecho** + **backlog P6 (olas 1–8) hecho** en código.  
+> **Pendiente humano:** pegar en el SQL Editor de Supabase, en este orden si aplica:
+> 1. [`supabase/migration.sql`](supabase/migration.sql) — columna `genre` + quitar políticas `DELETE` (P5).
+> 2. [`supabase/migration-p6.sql`](supabase/migration-p6.sql) — cerrar UPDATE anónimo / INSERT-only (P6).
+> Sin ambos, el código desplegado no queda alineado con RLS en producción. Resumen de olas: [`docs/superpowers/plans/2026-09-07-backlog-fiesta.md`](docs/superpowers/plans/2026-09-07-backlog-fiesta.md).
 
 ---
 
@@ -336,16 +339,20 @@ Checklist manual:
 
 ## Notas para el humano (dueño del repo)
 
-0. **P5 ya está en `main`.** Antes de la próxima fiesta, pega **`supabase/migration.sql`** (no el schema completo) en el SQL Editor: añade la columna `genre` y quita las políticas `DELETE` de `songs` y `storage.objects`. Es seguro volver a correrlo. `schema.sql` queda para instalaciones nuevas.  
-1. `apps/web/.env` y secrets de Actions (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`) no cambian.  
+0. **P5 + guess + backlog P6 ya están en el código.** Antes de la próxima fiesta, pega en el SQL Editor (si aún no):
+   - **`supabase/migration.sql`** — columna `genre` + quita políticas `DELETE`.
+   - **`supabase/migration-p6.sql`** — cierra UPDATE anónimo (INSERT-only).
+   Ambos son seguros de volver a correr. `schema.sql` queda para instalaciones nuevas.  
+1. `apps/web/.env` y secrets de Actions (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`) no cambian. Opcional: `VITE_LIBRARY_PIN` (freno de UI al subir; no es auth).  
 2. CORS de Storage: Pages (`https://orusuko.github.io` o el origin real) + `http://localhost:5173`.  
-3. **Borrar canciones:** Table Editor (`songs`) + Storage (`song-audio`), borrando la fila y el objeto con el mismo `id`. Ya no se puede desde la app ni con la anon key (RLS lo bloquea tras correr `migration.sql`).  
+3. **Borrar canciones:** Table Editor (`songs`) + Storage (`song-audio`), borrando la fila y el objeto con el mismo `id`. Ya no se puede desde la app ni con la anon key (RLS lo bloquea tras correr `migration.sql`). Tras `migration-p6.sql`, tampoco hay UPDATE anónimo.  
 4. Canciones subidas antes de P5 quedan con género `'otro'` (default de la columna nueva) aunque el JSONB tenga `"custom"`; en el setlist salen como «Otro». No se migran a ciegas: re-súbelas o edita el JSONB a mano si quieres reclasificarlas.  
 5. Plan gratis ~1 GB Storage; 12 MB/canción.  
-6. Fiesta: host en Pages o localhost; móviles con internet y el código. El host necesita firmar/leer Storage.  
+6. Fiesta: host en Pages o localhost; móviles con internet y el código (o QR / `?room=`). El host necesita firmar/leer Storage. F5 restaura el show vía `sessionStorage`; cerrar la pestaña lo termina.  
 7. Autoplay: si el navegador bloquea, nudge «Reproducir audio» durante el countdown (pantalla se queda en "YA" hasta que el audio arranca de verdad); P5 marca `startedAt` **después** de ese `play()`, no antes — así se corrigió el delay de ~2 s reportado.  
-8. Decisión documentada (punto 1 del plan): se dejó `UPDATE` abierto para `anon` en `songs` y `storage.objects` porque `saveCloudSong` usa `upsert` (permite re-subir el MP3 de una canción ya importada sin fallar por conflicto de `id`). Si en el futuro prefieres cerrarlo también, cambia el guardado a `insert` puro.  
-9. **Setlist:** es por sala, no se guarda en Supabase; cada host la arma de nuevo al abrir el lobby (género + quién subió + exclusión de temas sueltos), sobre la biblioteca completa del grupo.  
+8. Decisión documentada (punto 1 del plan P5; supersedida en P6): el upsert anónimo se cerró — `saveCloudSong` es INSERT-only; conflicto de id → copia nueva.  
+9. **Setlist:** es por sala, no se guarda en Supabase; cada host la arma de nuevo al abrir el lobby (género + artista + quién subió + exclusión de temas sueltos), sobre la biblioteca completa del grupo.  
 10. **Rondas:** el stepper del lobby por defecto llega en **5**; se puede bajar a 1 o subir hasta 12. Al llegar a la última, «Una más» suma una ronda más; «Terminar show» cierra en cualquier momento.  
 11. **Karaoke:** un turno = la canción completa para un cantante (no se parte por estrofas); los puntos de la ronda son la **suma** de las estrellas (1–5) que dé cada votante no-cantante, no un promedio.  
-12. Si algún día vuelve a sentirse desfasado en fiesta real, revisa primero que el host esté reportando el playhead (consola: sin errores de `reportPlayhead`) antes de tocar la calibración manual — la calibración ±0.1/0.5 s es solo ajuste fino, no el arreglo del delay de arranque.
+12. Si algún día vuelve a sentirse desfasado en fiesta real, revisa primero que el host esté reportando el playhead (consola: sin errores de `reportPlayhead`) antes de tocar la calibración manual — la calibración ±0.1/0.5 s es solo ajuste fino, no el arreglo del delay de arranque.  
+13. **Adivina la canción** y el resto del backlog P6: ver README y `docs/superpowers/plans/2026-09-07-backlog-fiesta.md`.

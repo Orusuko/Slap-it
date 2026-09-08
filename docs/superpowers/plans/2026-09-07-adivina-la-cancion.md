@@ -4,31 +4,31 @@ overview: "Nuevo modo `guess` que reutiliza el MP3 instrumental del karaoke: 10 
 todos:
   - id: guess-helpers
     content: "Helpers puros: clip 10s, labels, buildGuessQuestion, score Kahoot, sanitizeGuessState + tests"
-    status: pending
+    status: completed
   - id: guess-model
     content: Enum mode guess + GuessQuestion/Answer en RoomPublicState y create()
-    status: pending
+    status: completed
   - id: guess-prepare
     content: "prepareRound/start: 4 canciones, pregunta, startPosition=chorus, sin cantante"
-    status: pending
+    status: completed
   - id: guess-engine-flow
     content: Timer del clip, answer, resolveGuess, closeGuessVoting, disconnect
-    status: pending
+    status: completed
   - id: guess-sanitize-publish
     content: publish() emite sanitizeGuessState; get() interno sigue completo
-    status: pending
+    status: completed
   - id: guess-protocol
     content: RoomCommand answer + hostEngine.closeGuessVoting + tests
-    status: pending
+    status: completed
   - id: guess-ui
     content: Lobby, listen, grid Kahoot, reveal, score, pausa audio, README
-    status: pending
+    status: completed
 isProject: false
 ---
 
 # Adivina la canción Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Estado: hecho.** Modo `guess` implementado y documentado en el README.
 
 **Goal:** Añadir el modo **Adivina la canción**: el host pone el instrumental de karaoke (sin letra ni título), suenan 10 s desde el estribillo y todos los jugadores eligen entre 4 títulos en el teléfono; quien acierta más rápido suma más puntos.
 

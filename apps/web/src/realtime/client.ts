@@ -4,8 +4,9 @@ import { readSupabaseCredentials } from "./env";
 let cached: SupabaseClient | null = null;
 
 /**
- * Cliente Supabase memorizado por pestaña, usado solo para Realtime
- * (Broadcast + Presence). No se leen ni escriben tablas.
+ * Cliente Supabase memorizado por pestaña. Sirve Realtime (Broadcast +
+ * Presence) y también Postgres/Storage (biblioteca de canciones: listar,
+ * insertar filas y firmar URLs de audio).
  */
 export function getSupabaseClient(): SupabaseClient {
   if (cached) return cached;
