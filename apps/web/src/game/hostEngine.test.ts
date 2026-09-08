@@ -113,7 +113,8 @@ describe("hostEngine", () => {
       playerId: "p1",
       name: "Ada otra vez",
     });
-    expect(duplicateJoin).toEqual({ requestId: "dup", ok: false, error: "Ya estás en esta sala" });
+    expect(duplicateJoin).toEqual({ requestId: "dup", ok: true });
+    expect(engine.state.players.filter((player) => player.id === "p1")).toHaveLength(1);
 
     engine.start();
     expect(engine.state.phase).toBe("ready");
