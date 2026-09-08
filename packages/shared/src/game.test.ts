@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getCurrentLine,
+  getDisplayPosition,
   getLyricWindow,
   getPlaybackPosition,
   isPlaceholderSong,
@@ -49,6 +50,21 @@ describe("selección y tiempo", () => {
         4_000,
       ),
     ).toBe(22.5);
+  });
+
+  it("getDisplayPosition: el jugador sigue el playhead del host; el host cae al reloj", () => {
+    const base = {
+      startPosition: 10,
+      startedAt: 1_000,
+      playbackOffsetMs: 0,
+      hostPlayhead: 20,
+      hostNow: 5_000,
+    };
+    expect(getDisplayPosition(base, 6_000, "player")).toBe(21);
+    expect(getDisplayPosition(base, 6_000, "host")).toBe(15);
+    expect(
+      getDisplayPosition({ ...base, hostPlayhead: null, hostNow: null }, 6_000, "player"),
+    ).toBe(15);
   });
 
   it("encuentra la línea actual respetando sus límites", () => {

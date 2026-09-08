@@ -294,4 +294,6 @@ export interface RoomPublicState {
   guessDeadlineAt: number | null;
   /** Puntos de la última ronda `guess` por jugador; null fuera de ese modo. */
   lastGuessPoints: Record<string, number> | null;
+  /** true si la canción de esta ronda ya salió esta noche (el pool se recicla). */
+  songRepeatWarning: boolean;
 }

@@ -6,6 +6,7 @@ import {
   planRelay,
   reassignRelayFrom,
   relayStartPosition,
+  relayWillBeShort,
   resolveTurnTimes,
 } from "./relay.js";
 import { createFixtureSong } from "./testFixtures.js";
@@ -109,5 +110,13 @@ describe("getCurrentTurn / resolveTurnTimes", () => {
     const last = plan.turns.at(-1)!;
     const { end } = resolveTurnTimes(song, last);
     expect(getCurrentTurn(plan, song, end + 1)?.index).toBe(last.index);
+  });
+});
+
+describe("relayWillBeShort", () => {
+  it("es corto si hay menos secciones que jugadores + 1", () => {
+    const shortSong = { sections: song.sections.slice(0, 3) };
+    expect(relayWillBeShort(shortSong, 4)).toBe(true);
+    expect(relayWillBeShort(song, 4)).toBe(false);
   });
 });

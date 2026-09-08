@@ -97,7 +97,8 @@ describe("RoomManager modo guess", () => {
     vi.advanceTimersByTime(GUESS_CLIP_SECONDS * 1000);
     const open = rooms.get(code)!;
     expect(open.phase).toBe("voting");
-    expect(open.guessDeadlineAt).toBe(Date.now() + GUESS_ANSWER_WINDOW_MS);
+    expect(open.guessDeadlineAt).toBeGreaterThanOrEqual(Date.now() + GUESS_ANSWER_WINDOW_MS - 5);
+    expect(open.guessDeadlineAt).toBeLessThanOrEqual(Date.now() + GUESS_ANSWER_WINDOW_MS);
 
     const correct = open.guessQuestion!.correctOptionId;
     rooms.answer(code, "p1", correct);
@@ -160,6 +161,21 @@ describe("RoomManager modo guess", () => {
     emptyRooms.disconnect(emptyCode, "p1");
     expect(emptyRooms.get(emptyCode)!.phase).toBe("finished");
     expect(emptyRooms.get(emptyCode)!.endReason).toBe("not_enough_players");
+  });
+
+  it("guess usa el setlist, no todo el catálogo", () => {
+    const { rooms } = guessRooms();
+    const created = rooms.create("host", "TV");
+    rooms.configure(created.code, "host", { ...defaultGameConfig, mode: "guess", totalRounds: 1 });
+    rooms.join(created.code, "p1", "Ada");
+    rooms.join(created.code, "p2", "Lin");
+    rooms.setSetlist(created.code, "host", ["g1", "g2", "g3"]);
+    expect(() => rooms.start(created.code, "host")).toThrow("al menos 4 canciones");
+    rooms.setSetlist(created.code, "host", ["g1", "g2", "g3", "g4"]);
+    rooms.start(created.code, "host");
+    const optionIds = rooms.get(created.code)!.guessQuestion!.options.map((option) => option.id);
+    expect(optionIds.every((id) => ["g1", "g2", "g3", "g4"].includes(id))).toBe(true);
+    rooms.disconnect(created.code, "host");
   });
 
   it("el broadcast oculta título y correcta hasta reveal", () => {

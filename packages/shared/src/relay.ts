@@ -146,3 +146,12 @@ export function reassignRelayFrom(
   });
   return { ...plan, turns };
 }
+
+/**
+ * El relevo queda corto (una estrofa por persona y blackout al último)
+ * cuando no hay al menos `jugadores + 1` secciones.
+ */
+export function relayWillBeShort(song: Pick<Song, "sections">, playerCount: number): boolean {
+  if (playerCount <= 0) return false;
+  return song.sections.length < playerCount + 1;
+}
