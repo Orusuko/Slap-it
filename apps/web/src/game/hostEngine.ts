@@ -1,4 +1,4 @@
-import { RoomManager, type GameConfig, type RoomPublicState, type Song } from "@slay-it/shared";
+import { RoomManager, type GameConfig, type RoomPublicState, type RoomSnapshot, type Song } from "@slay-it/shared";
 import type { RoomAck, RoomCommand } from "../realtime/protocol";
 
 export interface HostEngine {
@@ -30,6 +30,8 @@ export interface HostEngine {
   extendRound: () => void;
   /** «Terminar show» (P5): cierra el show ya mismo. */
   finishShow: () => void;
+  /** Vuelve al lobby con los mismos jugadores y código, sin recargar. */
+  resetToLobby: () => void;
   resolveManually: (correct: boolean) => void;
   recalibrate: (deltaMs: number) => void;
   /** Fin de interpretación en modo karaoke (P5): pasa de `playing` a `voting`. */
@@ -38,6 +40,7 @@ export interface HostEngine {
   closeKaraokeVoting: () => void;
   /** El host cierra la ventana de opciones de Adivina la canción. */
   closeGuessVoting: () => void;
+  exportSnapshot: () => RoomSnapshot | undefined;
   destroy: () => void;
 }
 
@@ -45,18 +48,11 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Ocurrió un error inesperado";
 }
 
-/**
- * Envuelve `RoomManager` para el navegador del anfitrión.
- * Valida que `playerId` del comando coincida con una clave de Presence
- * observada (mitiga spoof básico en el canal).
- */
-export function createHostEngine(
+function wrapHostEngine(
+  manager: RoomManager,
+  code: string,
   hostId: string,
-  onState: (state: RoomPublicState) => void,
 ): HostEngine {
-  const manager = new RoomManager((_code, state) => onState(state));
-  const { code } = manager.create(hostId, "Anfitrión");
-
   const guarded = (action: () => void): void => {
     try {
       action();
@@ -113,13 +109,39 @@ export function createHostEngine(
     continueRound: () => guarded(() => manager.continue(code, hostId)),
     extendRound: () => guarded(() => manager.extendRound(code, hostId)),
     finishShow: () => guarded(() => manager.finishShow(code, hostId)),
+    resetToLobby: () => guarded(() => manager.resetToLobby(code, hostId)),
     resolveManually: (correct) => guarded(() => manager.resolveManually(code, hostId, correct)),
     recalibrate: (deltaMs) => guarded(() => manager.recalibrate(code, hostId, deltaMs)),
     endKaraokeTurn: () => guarded(() => manager.endKaraokeTurn(code, hostId)),
     closeKaraokeVoting: () => guarded(() => manager.closeKaraokeVoting(code, hostId)),
     closeGuessVoting: () => guarded(() => manager.closeGuessVoting(code, hostId)),
+    exportSnapshot: () => manager.exportSnapshot(code),
     destroy: () => {
       manager.disconnect(code, hostId);
     },
   };
+}
+
+/**
+ * Envuelve `RoomManager` para el navegador del anfitrión.
+ * Valida que `playerId` del comando coincida con una clave de Presence
+ * observada (mitiga spoof básico en el canal).
+ */
+export function createHostEngine(
+  hostId: string,
+  onState: (state: RoomPublicState) => void,
+): HostEngine {
+  const manager = new RoomManager((_code, state) => onState(state));
+  const { code } = manager.create(hostId, "Anfitrión");
+  return wrapHostEngine(manager, code, hostId);
+}
+
+/** Restaura la sala del host tras recargar la pestaña (mismo código y hostId). */
+export function createHostEngineFromSnapshot(
+  snapshot: RoomSnapshot,
+  onState: (state: RoomPublicState) => void,
+): HostEngine {
+  const manager = new RoomManager((_code, state) => onState(state));
+  const state = manager.restore(snapshot);
+  return wrapHostEngine(manager, state.code, snapshot.hostId);
 }

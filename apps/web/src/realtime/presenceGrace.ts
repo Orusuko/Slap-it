@@ -1,5 +1,7 @@
 /** Ventana antes de expulsar a un jugador tras un leave de Presence (bloqueo de pantalla, etc.). */
 export const PRESENCE_GRACE_MS = 12_000;
+/** Gracia más larga solo para el leave del host (Vite reload / F5). */
+export const HOST_PRESENCE_GRACE_MS = 20_000;
 
 export interface PresenceLeaveGuard {
   notifyLeave: (playerId: string) => void;

@@ -1,7 +1,7 @@
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { RoomPublicState } from "@slay-it/shared";
 import { getSupabaseClient } from "./client";
-import { createPresenceLeaveGuard } from "./presenceGrace";
+import { createPresenceLeaveGuard, HOST_PRESENCE_GRACE_MS } from "./presenceGrace";
 import {
   ACK_EVENT,
   COMMAND_EVENT,
@@ -157,7 +157,7 @@ export function openPlayerChannel(
 
   const hostLeaveGuard = createPresenceLeaveGuard(() => {
     handlers.onHostLeft();
-  });
+  }, HOST_PRESENCE_GRACE_MS);
 
   channel
     .on("broadcast", { event: STATE_EVENT }, ({ payload }) => {

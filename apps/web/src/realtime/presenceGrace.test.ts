@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createPresenceLeaveGuard, PRESENCE_GRACE_MS } from "./presenceGrace";
+import { createPresenceLeaveGuard, HOST_PRESENCE_GRACE_MS, PRESENCE_GRACE_MS } from "./presenceGrace";
 
 describe("createPresenceLeaveGuard", () => {
   beforeEach(() => {
@@ -40,5 +40,10 @@ describe("createPresenceLeaveGuard", () => {
     guard.dispose();
     vi.advanceTimersByTime(PRESENCE_GRACE_MS);
     expect(confirmed).toEqual([]);
+  });
+
+  it("la gracia del host es más larga que la del jugador", () => {
+    expect(HOST_PRESENCE_GRACE_MS).toBe(20_000);
+    expect(HOST_PRESENCE_GRACE_MS).toBeGreaterThan(PRESENCE_GRACE_MS);
   });
 });
