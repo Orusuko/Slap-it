@@ -1,5 +1,6 @@
 import { songSchema, type Song } from "@slay-it/shared";
 import { getSupabaseClient } from "../realtime/client";
+import { DUPLICATE_SONG_MESSAGE, isDuplicateSongError } from "./cloudErrors";
 
 const TABLE = "songs";
 const BUCKET = "song-audio";
@@ -60,9 +61,9 @@ export async function cloudSongExists(title: string, artist: string): Promise<bo
 export type SaveCloudSongStage = "uploading" | "saving";
 
 /**
- * Sube el MP3 al bucket `song-audio` (key = `song.id`) y luego guarda la
- * fila en `songs`. Si falla el guardado de la fila, intenta limpiar el
- * audio recién subido para no dejar huérfanos.
+ * Sube el MP3 al bucket `song-audio` (key = `song.id`) y luego INSERTA la
+ * fila en `songs` (P6: sin upsert). Un id ya usado es error claro.
+ * No se limpia Storage si falla el insert: RLS ya no permite DELETE.
  */
 export async function saveCloudSong(
   song: Song,
@@ -80,10 +81,13 @@ export async function saveCloudSong(
 
   onStage?.("uploading");
   const uploadResult = await client.storage.from(BUCKET).upload(objectKey, audioFile, {
-    upsert: true,
+    upsert: false,
     contentType: audioFile.type || "audio/mpeg",
   });
-  if (uploadResult.error) throw new Error(uploadResult.error.message);
+  if (uploadResult.error) {
+    if (isDuplicateSongError(uploadResult.error)) throw new Error(DUPLICATE_SONG_MESSAGE);
+    throw new Error(uploadResult.error.message);
+  }
 
   onStage?.("saving");
   const row = {
@@ -95,9 +99,9 @@ export async function saveCloudSong(
     genre: song.genre,
     song,
   };
-  const { error } = await client.from(TABLE).upsert(row);
+  const { error } = await client.from(TABLE).insert(row);
   if (error) {
-    await client.storage.from(BUCKET).remove([objectKey]).catch(() => {});
+    if (isDuplicateSongError(error)) throw new Error(DUPLICATE_SONG_MESSAGE);
     throw new Error(error.message);
   }
 }

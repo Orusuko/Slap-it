@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Song } from "@slay-it/shared";
 import { getCloudAudioUrl } from "../songs/cloudSongStore";
+import { isSignedUrlExpired } from "../songs/cloudErrors";
 import { getUserSongAudioBlob } from "../songs/userSongStore";
 
 export type HostAudioSource = "none" | "catalog" | "manual";
@@ -48,6 +49,7 @@ export function resolveSongAudioUrl(
 }
 
 const CATALOG_LOAD_TIMEOUT_MS = 4_000;
+const SIGNED_URL_REFRESH_MS = 45 * 60 * 1_000;
 
 /**
  * Prueba si una URL de audio es cargable. Extraída para poder testear el
@@ -87,6 +89,8 @@ export function useHostAudio(): HostAudio {
   const objectUrlRef = useRef<string | null>(null);
   const manualOverrideRef = useRef(false);
   const loadTokenRef = useRef(0);
+  const supabaseSongRef = useRef<Song | null>(null);
+  const signedLoadedAtRef = useRef(0);
   const [fileName, setFileName] = useState<string | null>(null);
   const [source, setSource] = useState<HostAudioSource>("none");
   const [probing, setProbing] = useState(false);
@@ -139,6 +143,7 @@ export function useHostAudio(): HostAudio {
     // que sondear con `probeAudioUrl`).
     if (song?.audioSource?.type === "supabase") {
       const objectKey = song.audioSource.objectKey;
+      supabaseSongRef.current = song;
       setFileName(null);
       setSource("none");
       setNeedsGesture(false);
@@ -155,14 +160,34 @@ export function useHostAudio(): HostAudio {
           const audio = ensureAudio();
           audio.src = url;
           audio.preload = "auto";
+          signedLoadedAtRef.current = Date.now();
           setFileName(`${song.title} (biblioteca)`);
           setSource("catalog");
         })
-        .catch(() => {
-          if (token === loadTokenRef.current) resetToNone();
+        .catch((caught: unknown) => {
+          if (token !== loadTokenRef.current) return;
+          if (isSignedUrlExpired(caught)) {
+            void getCloudAudioUrl(objectKey).then((url) => {
+              if (token !== loadTokenRef.current || !url) {
+                resetToNone();
+                return;
+              }
+              const audio = ensureAudio();
+              audio.src = url;
+              audio.preload = "auto";
+              signedLoadedAtRef.current = Date.now();
+              setProbing(false);
+              setFileName(`${song.title} (biblioteca)`);
+              setSource("catalog");
+            });
+            return;
+          }
+          resetToNone();
         });
       return;
     }
+
+    supabaseSongRef.current = null;
 
     // Canción subida por un jugador antes de la biblioteca cloud: el audio
     // vive como blob en IndexedDB de este dispositivo (no hay URL pública
@@ -236,13 +261,41 @@ export function useHostAudio(): HostAudio {
 
   const playFrom = useCallback(async (seconds: number) => {
     const audio = audioRef.current;
+    const supabaseSong = supabaseSongRef.current;
+    if (
+      supabaseSong?.audioSource?.type === "supabase" &&
+      signedLoadedAtRef.current > 0 &&
+      Date.now() - signedLoadedAtRef.current >= SIGNED_URL_REFRESH_MS
+    ) {
+      const url = await getCloudAudioUrl(supabaseSong.audioSource.objectKey);
+      if (url && audio) {
+        audio.src = url;
+        signedLoadedAtRef.current = Date.now();
+      }
+    }
     if (!audio || !audio.src) return false;
     audio.currentTime = Math.max(0, seconds);
     try {
       await audio.play();
       setNeedsGesture(false);
       return true;
-    } catch {
+    } catch (caught) {
+      if (supabaseSong?.audioSource?.type === "supabase" && isSignedUrlExpired(caught)) {
+        const url = await getCloudAudioUrl(supabaseSong.audioSource.objectKey);
+        if (url) {
+          audio.src = url;
+          signedLoadedAtRef.current = Date.now();
+          audio.currentTime = Math.max(0, seconds);
+          try {
+            await audio.play();
+            setNeedsGesture(false);
+            return true;
+          } catch {
+            setNeedsGesture(true);
+            return false;
+          }
+        }
+      }
       setNeedsGesture(true);
       return false;
     }

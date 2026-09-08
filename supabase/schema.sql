@@ -16,10 +16,9 @@
 -- proyecto borra filas en Table Editor y objetos en Storage desde el
 -- dashboard cuando haga falta.
 --
--- `UPDATE` se deja abierto porque `saveCloudSong` usa `upsert` (permite
--- volver a subir el MP3 de una canción ya importada sin que falle por
--- conflicto de `id`); si prefieres cerrarlo también, cambia el guardado a
--- `insert` puro y trata el conflicto de id como error.
+-- P6: tampoco hay `UPDATE` anónimo. `saveCloudSong` hace INSERT puro; un
+-- conflicto de id se trata como error («esa canción ya existe»). El editor
+-- de sync guarda una copia con id nuevo. No reabras UPDATE ni DELETE.
 --
 -- Si el grupo deja de ser de confianza, añade Supabase Auth y cambia estas
 -- políticas para exigir `authenticated`.
@@ -71,12 +70,8 @@ create policy "songs_insert_all"
   to anon, authenticated
   with check (true);
 
+-- P6: sin política UPDATE a propósito (INSERT-only). No la vuelvas a crear.
 drop policy if exists "songs_update_all" on public.songs;
-create policy "songs_update_all"
-  on public.songs for update
-  to anon, authenticated
-  using (true)
-  with check (true);
 
 -- P5: sin política DELETE a propósito. No la vuelvas a crear "por si acaso".
 drop policy if exists "songs_delete_all" on public.songs;
@@ -104,12 +99,8 @@ create policy "song_audio_insert_all"
   to anon, authenticated
   with check (bucket_id = 'song-audio');
 
+-- P6: sin política UPDATE a propósito (INSERT-only).
 drop policy if exists "song_audio_update_all" on storage.objects;
-create policy "song_audio_update_all"
-  on storage.objects for update
-  to anon, authenticated
-  using (bucket_id = 'song-audio')
-  with check (bucket_id = 'song-audio');
 
 -- P5: sin política DELETE a propósito. No la vuelvas a crear "por si acaso".
 drop policy if exists "song_audio_delete_all" on storage.objects;
