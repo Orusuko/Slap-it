@@ -11,9 +11,10 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
 import { getLyricWindow, SONG_GENRES, SONG_GENRE_LABELS, type Song, type SongGenre } from "@slay-it/shared";
 import { cloudSongExists, getStoredUploaderName, saveCloudSong, setStoredUploaderName } from "./cloudSongStore";
+import { libraryPinRequired, libraryPinUnlocked, unlockLibraryPin } from "./libraryPin";
 import { parseLyrics } from "./parseLyrics";
 import {
   beginTapSync,
@@ -27,9 +28,14 @@ import {
   undoTapSync,
   type TapSyncState,
 } from "./tapSync";
+import { canonicalizeArtist, suggestArtists } from "./setlist";
 import { assembleUserSong, createUserSongId } from "./userSong";
 
 type WizardStep = "meta" | "lyrics" | "chorus" | "sync";
+
+function asSongGenre(value: string): SongGenre {
+  return (SONG_GENRES as readonly string[]).includes(value) ? (value as SongGenre) : "otro";
+}
 
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
@@ -39,26 +45,137 @@ function formatTime(seconds: number): string {
   return `${mins}:${String(secs).padStart(2, "0")}`;
 }
 
+function ArtistSuggest({
+  id,
+  value,
+  knownArtists,
+  onChange,
+}: {
+  id: string;
+  value: string;
+  knownArtists: readonly string[];
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const suggestions = useMemo(() => suggestArtists(knownArtists, value), [knownArtists, value]);
+  const listId = `${id}-list`;
+  const showList = open && suggestions.length > 0;
+
+  const pick = (name: string) => {
+    onChange(name);
+    setOpen(false);
+  };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (!showList) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setActiveIndex((index) => Math.min(index + 1, suggestions.length - 1));
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveIndex((index) => Math.max(index - 1, 0));
+    } else if (event.key === "Enter") {
+      const chosen = suggestions[activeIndex];
+      if (chosen) {
+        event.preventDefault();
+        pick(chosen);
+      }
+    } else if (event.key === "Escape") {
+      setOpen(false);
+    }
+  };
+
+  return (
+    <div className="artist-suggest">
+      <input
+        id={id}
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded={showList}
+        aria-controls={listId}
+        aria-activedescendant={showList ? `${listId}-${activeIndex}` : undefined}
+        autoComplete="off"
+        value={value}
+        maxLength={80}
+        placeholder="Ej. Grupo o solista"
+        onChange={(event) => {
+          onChange(event.target.value);
+          setOpen(true);
+          setActiveIndex(0);
+        }}
+        onFocus={() => {
+          setOpen(true);
+          setActiveIndex(0);
+        }}
+        onBlur={() => {
+          window.setTimeout(() => setOpen(false), 120);
+        }}
+        onKeyDown={onKeyDown}
+      />
+      {showList && (
+        <ul id={listId} role="listbox" className="artist-suggest-list">
+          {suggestions.map((name, index) => (
+            <li key={name} role="presentation">
+              <button
+                type="button"
+                id={`${listId}-${index}`}
+                role="option"
+                aria-selected={index === activeIndex}
+                className={index === activeIndex ? "is-active" : ""}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  pick(name);
+                }}
+              >
+                {name}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export function UploadSongWizard({
   onClose,
   onSaved,
+  knownArtists = [],
+  initialSong = null,
+  initialAudioUrl = null,
 }: {
   onClose: () => void;
   onSaved: (song: Song) => void;
+  knownArtists?: readonly string[];
+  /** Copia de edición: prefills meta/letra; siempre se guarda con id nuevo. */
+  initialSong?: Song | null;
+  /** URL firmada opcional para precargar el MP3 como File. */
+  initialAudioUrl?: string | null;
 }) {
+  // PIN solo frena la UI; la anon key de Supabase sigue en el bundle (no es auth real).
+  const [pinUnlocked, setPinUnlocked] = useState(
+    () => !libraryPinRequired() || libraryPinUnlocked(),
+  );
+  const [pinInput, setPinInput] = useState("");
+  const [pinError, setPinError] = useState("");
+
   const [step, setStep] = useState<WizardStep>("meta");
 
-  const [title, setTitle] = useState("");
-  const [artist, setArtist] = useState("");
-  const [genre, setGenre] = useState<SongGenre>("otro");
+  const [title, setTitle] = useState(() => initialSong?.title ?? "");
+  const [artist, setArtist] = useState(() => initialSong?.artist ?? "");
+  const [genre, setGenre] = useState<SongGenre>(() => asSongGenre(initialSong?.genre ?? "otro"));
   const [uploaderName, setUploaderName] = useState(() => getStoredUploaderName());
   const [file, setFile] = useState<File | null>(null);
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
-  const [duration, setDuration] = useState<number | null>(null);
+  const [duration, setDuration] = useState<number | null>(() => initialSong?.duration ?? null);
   const [metaError, setMetaError] = useState("");
+  const [audioLoading, setAudioLoading] = useState(Boolean(initialAudioUrl));
   const objectUrlRef = useRef<string | null>(null);
 
-  const [lyricsText, setLyricsText] = useState("");
+  const [lyricsText, setLyricsText] = useState(() =>
+    initialSong ? initialSong.lines.map((line) => line.text).join("\n") : "",
+  );
   const lines = useMemo(() => parseLyrics(lyricsText), [lyricsText]);
 
   const [chorusLines, setChorusLines] = useState<Set<number>>(new Set());
@@ -85,6 +202,10 @@ export function UploadSongWizard({
   const [saving, setSaving] = useState(false);
   const [saveStage, setSaveStage] = useState("");
   const [saveError, setSaveError] = useState("");
+  const [duplicatePrompt, setDuplicatePrompt] = useState<{ title: string; artist: string } | null>(
+    null,
+  );
+  const allowDuplicateRef = useRef(false);
 
   useEffect(
     () => () => {
@@ -93,9 +214,7 @@ export function UploadSongWizard({
     [],
   );
 
-  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const picked = event.target.files?.[0];
-    if (!picked) return;
+  const applyAudioFile = (picked: File) => {
     if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
     const url = URL.createObjectURL(picked);
     objectUrlRef.current = url;
@@ -123,6 +242,39 @@ export function UploadSongWizard({
       { once: true },
     );
     probe.src = url;
+  };
+
+  // Prefill de audio desde URL firmada (editar sync); si falla, el usuario vuelve a adjuntar.
+  useEffect(() => {
+    if (!initialAudioUrl) {
+      setAudioLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setAudioLoading(true);
+    void fetch(initialAudioUrl)
+      .then(async (response) => {
+        if (!response.ok) throw new Error("fetch failed");
+        const blob = await response.blob();
+        if (cancelled) return;
+        const base = (initialSong?.title ?? "cancion").replace(/[^\w-]+/g, "_") || "cancion";
+        applyAudioFile(new File([blob], `${base}.mp3`, { type: blob.type || "audio/mpeg" }));
+      })
+      .catch(() => {
+        if (!cancelled) setMetaError("No se pudo precargar el audio; adjunta el MP3 de nuevo.");
+      })
+      .finally(() => {
+        if (!cancelled) setAudioLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const picked = event.target.files?.[0];
+    if (!picked) return;
+    applyAudioFile(picked);
   };
 
   const canContinueMeta = Boolean(
@@ -233,10 +385,11 @@ export function UploadSongWizard({
     try {
       const id = createUserSongId();
       const songLines = buildLinesFromTapSync(tapState, id);
+      const artistName = canonicalizeArtist(knownArtists, artist);
       const song = assembleUserSong({
         id,
         title,
-        artist,
+        artist: artistName,
         duration: duration ?? songLines.at(-1)!.end,
         lines: songLines,
         chorusLineIndices: chorusLines,
@@ -244,16 +397,15 @@ export function UploadSongWizard({
         genre,
       });
 
-      const alreadyExists = await cloudSongExists(title, artist).catch(() => false);
-      if (
-        alreadyExists &&
-        !window.confirm(
-          `Ya hay una canción "${title} — ${artist}" en la biblioteca del grupo. ¿Subir otra copia?`,
-        )
-      ) {
-        setSaving(false);
-        return;
+      if (!allowDuplicateRef.current) {
+        const alreadyExists = await cloudSongExists(title, artistName).catch(() => false);
+        if (alreadyExists) {
+          setDuplicatePrompt({ title, artist: artistName });
+          setSaving(false);
+          return;
+        }
       }
+      allowDuplicateRef.current = false;
 
       await saveCloudSong(song, file, name, (stage) =>
         setSaveStage(stage === "uploading" ? "Subiendo audio…" : "Guardando en la biblioteca…"),
@@ -270,11 +422,70 @@ export function UploadSongWizard({
 
   const stepIndex = step === "meta" ? 0 : step === "lyrics" ? 1 : step === "chorus" ? 2 : 3;
 
+  if (!pinUnlocked) {
+    return (
+      <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="PIN de biblioteca">
+        <div className="wizard-modal">
+          <header className="wizard-header">
+            <span className="step-label"><Music2 size={18} /> Biblioteca del grupo</span>
+            <button type="button" className="wizard-close" onClick={onClose} aria-label="Cerrar">
+              <X size={20} />
+            </button>
+          </header>
+          {/* PIN solo frena la UI; la anon key de Supabase sigue en el bundle. */}
+          <div className="wizard-body">
+            <p className="wizard-hint">
+              Introduce el PIN del grupo para subir canciones. Es solo un freno de interfaz,
+              no sustituye permisos reales en Supabase.
+            </p>
+            <div className="field">
+              <label htmlFor="library-pin">PIN</label>
+              <input
+                id="library-pin"
+                type="password"
+                autoComplete="off"
+                value={pinInput}
+                onChange={(event) => {
+                  setPinInput(event.target.value);
+                  setPinError("");
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    if (unlockLibraryPin(pinInput)) setPinUnlocked(true);
+                    else setPinError("PIN incorrecto.");
+                  }
+                }}
+              />
+            </div>
+            {pinError && <p className="wizard-error">{pinError}</p>}
+            <div className="wizard-footer">
+              <span />
+              <button
+                type="button"
+                className="button button--primary"
+                disabled={!pinInput.trim()}
+                onClick={() => {
+                  if (unlockLibraryPin(pinInput)) setPinUnlocked(true);
+                  else setPinError("PIN incorrecto.");
+                }}
+              >
+                Desbloquear
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Sube tu canción">
       <div className="wizard-modal">
         <header className="wizard-header">
-          <span className="step-label"><Music2 size={18} /> Sube tu canción</span>
+          <span className="step-label">
+            <Music2 size={18} /> {initialSong ? "Editar sync (copia)" : "Sube tu canción"}
+          </span>
           <button type="button" className="wizard-close" onClick={onClose} aria-label="Cerrar">
             <X size={20} />
           </button>
@@ -291,13 +502,54 @@ export function UploadSongWizard({
           Se guardará en la biblioteca compartida de Supabase: tus amigos la verán desde cualquier
           dispositivo, no solo en este navegador.
         </p>
+        {initialSong && (
+          <p className="wizard-hint">
+            Se guarda como copia; el dueño borra la vieja en Supabase. Hay que volver a sincronizar
+            la letra con taps.
+          </p>
+        )}
 
-        {step === "meta" && (
+        {duplicatePrompt && (
+          <div className="wizard-body" role="alertdialog" aria-label="Canción duplicada">
+            <p className="wizard-hint">
+              Ya hay una canción &quot;{duplicatePrompt.title} — {duplicatePrompt.artist}&quot; en la
+              biblioteca del grupo.
+            </p>
+            <div className="wizard-footer">
+              <button
+                type="button"
+                className="button button--secondary"
+                onClick={() => setDuplicatePrompt(null)}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="button button--primary"
+                onClick={() => {
+                  setDuplicatePrompt(null);
+                  allowDuplicateRef.current = true;
+                  void handleSave();
+                }}
+              >
+                Subir copia
+              </button>
+            </div>
+          </div>
+        )}
+
+        {!duplicatePrompt && step === "meta" && (
           <div className="wizard-body">
             <label className="audio-attach wizard-file">
               <Upload size={16} />
-              <span>{file ? file.name : "Elegir archivo de audio (MP3, etc.)"}</span>
-              <input type="file" accept="audio/*" onChange={handleFileChange} />
+              <span>
+                {audioLoading
+                  ? "Cargando audio…"
+                  : file
+                    ? file.name
+                    : "Elegir archivo de audio (MP3, etc.)"}
+              </span>
+              <input type="file" accept="audio/*" onChange={handleFileChange} disabled={audioLoading} />
             </label>
             {duration != null && <p className="wizard-hint">Duración detectada: {formatTime(duration)}</p>}
             {metaError && <p className="wizard-error">{metaError}</p>}
@@ -307,7 +559,10 @@ export function UploadSongWizard({
             </div>
             <div className="field">
               <label htmlFor="song-artist">Artista</label>
-              <input id="song-artist" value={artist} onChange={(e) => setArtist(e.target.value)} placeholder="Ej. Grupo o solista" maxLength={80} />
+              <ArtistSuggest id="song-artist" value={artist} knownArtists={knownArtists} onChange={setArtist} />
+              {knownArtists.length > 0 && (
+                <p className="wizard-hint">Si ya está en la biblioteca, elígelo de la lista para agrupar bien el filtro.</p>
+              )}
             </div>
             <div className="field">
               <label htmlFor="song-genre">Género</label>
@@ -331,14 +586,22 @@ export function UploadSongWizard({
             </div>
             <div className="wizard-footer">
               <span />
-              <button type="button" className="button button--primary" disabled={!canContinueMeta} onClick={() => setStep("lyrics")}>
+              <button
+                type="button"
+                className="button button--primary"
+                disabled={!canContinueMeta}
+                onClick={() => {
+                  setArtist(canonicalizeArtist(knownArtists, artist));
+                  setStep("lyrics");
+                }}
+              >
                 Continuar <ArrowRight size={18} />
               </button>
             </div>
           </div>
         )}
 
-        {step === "lyrics" && (
+        {!duplicatePrompt && step === "lyrics" && (
           <div className="wizard-body">
             <p className="wizard-hint">Escribe o pega la letra: cada línea del cuadro será una línea de karaoke.</p>
             <textarea
@@ -360,7 +623,7 @@ export function UploadSongWizard({
           </div>
         )}
 
-        {step === "chorus" && (
+        {!duplicatePrompt && step === "chorus" && (
           <div className="wizard-body">
             <p className="wizard-hint">
               Toca las líneas que son estribillo. Si se repite en varias partes de la canción,
@@ -407,7 +670,7 @@ export function UploadSongWizard({
           </div>
         )}
 
-        {step === "sync" && tapState && (
+        {!duplicatePrompt && step === "sync" && tapState && (
           <div className="wizard-body">
             <audio
               ref={audioRef}
