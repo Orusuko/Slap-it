@@ -36,6 +36,8 @@ export interface HostEngine {
   endKaraokeTurn: () => void;
   /** El host cierra la votación de estrellas ya mismo (P5). */
   closeKaraokeVoting: () => void;
+  /** El host cierra la ventana de opciones de Adivina la canción. */
+  closeGuessVoting: () => void;
   destroy: () => void;
 }
 
@@ -73,7 +75,7 @@ export function createHostEngine(
         if (keys && keys.size > 0 && !keys.has(command.playerId)) {
           // Join puede llegar un instante antes del sync de Presence: se tolera
           // solo en join; el voto exige presencia visible.
-          if (command.type === "vote" || command.type === "voteStars") {
+          if (command.type === "vote" || command.type === "voteStars" || command.type === "answer") {
             return {
               requestId: command.requestId,
               ok: false,
@@ -87,6 +89,8 @@ export function createHostEngine(
           manager.vote(code, command.playerId, command.yes);
         } else if (command.type === "voteStars") {
           manager.voteStars(code, command.playerId, command.stars);
+        } else if (command.type === "answer") {
+          manager.answer(code, command.playerId, command.optionId);
         }
         return { requestId: command.requestId, ok: true };
       } catch (error) {
@@ -113,6 +117,7 @@ export function createHostEngine(
     recalibrate: (deltaMs) => guarded(() => manager.recalibrate(code, hostId, deltaMs)),
     endKaraokeTurn: () => guarded(() => manager.endKaraokeTurn(code, hostId)),
     closeKaraokeVoting: () => guarded(() => manager.closeKaraokeVoting(code, hostId)),
+    closeGuessVoting: () => guarded(() => manager.closeGuessVoting(code, hostId)),
     destroy: () => {
       manager.disconnect(code, hostId);
     },

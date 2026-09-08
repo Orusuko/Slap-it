@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Song, RoomPublicState } from "@slay-it/shared";
+import {
+  GUESS_CLIP_SECONDS,
+  defaultGameConfig,
+  type Song,
+  type RoomPublicState,
+} from "@slay-it/shared";
 import { createHostEngine } from "./hostEngine";
 import { createRequestId } from "../realtime/protocol";
 
@@ -37,6 +42,29 @@ function createSampleSong(): Song {
     sections,
     lines,
   };
+}
+
+function createGuessSongs(): Song[] {
+  return ["g1", "g2", "g3", "g4"].map((id, index) => {
+    const base = createSampleSong();
+    return {
+      ...base,
+      id,
+      title: `Canción ${id}`,
+      artist: `Artista ${index + 1}`,
+      genre: index < 2 ? "ranchera" : "pop",
+      sections: base.sections.map((section) => ({
+        ...section,
+        id: `${id}-${section.id}`,
+        lineIds: section.lineIds.map((lineId) => `${id}-${lineId}`),
+      })),
+      lines: base.lines.map((line) => ({
+        ...line,
+        id: `${id}-${line.id}`,
+        sectionId: `${id}-${line.sectionId}`,
+      })),
+    };
+  });
 }
 
 describe("hostEngine", () => {
@@ -192,5 +220,50 @@ describe("hostEngine", () => {
     engine.removePlayer("p2");
     expect(engine.state.phase).toBe("finished");
     expect(engine.state.endReason).toBe("not_enough_players");
+  });
+
+  it("despacha answer en guess y closeGuessVoting cierra la ventana", () => {
+    const engine = createHostEngine("host-1", () => {});
+    engine.registerSongs(createGuessSongs());
+    engine.configure({ ...defaultGameConfig, mode: "guess", totalRounds: 2 });
+    engine.handleRemoteCommand({ type: "join", requestId: "r1", playerId: "p1", name: "Ada" });
+    engine.handleRemoteCommand({ type: "join", requestId: "r2", playerId: "p2", name: "Lin" });
+    engine.setHostHasAudio(true);
+    engine.start();
+    engine.startCountdown();
+    vi.advanceTimersByTime(3_000);
+    engine.hostConfirmPlaybackStarted(engine.state.startPosition);
+    vi.advanceTimersByTime(GUESS_CLIP_SECONDS * 1000);
+    expect(engine.state.phase).toBe("voting");
+
+    const ghostAnswer = engine.handleRemoteCommand(
+      {
+        type: "answer",
+        requestId: "ghost",
+        playerId: "intruso",
+        optionId: engine.state.guessQuestion!.correctOptionId,
+      },
+      { presenceKeys: new Set(["p1", "p2"]) },
+    );
+    expect(ghostAnswer).toEqual({
+      requestId: "ghost",
+      ok: false,
+      error: "No se pudo verificar tu presencia en la sala",
+    });
+
+    const correct = engine.state.guessQuestion!.correctOptionId;
+    const ack = engine.handleRemoteCommand({
+      type: "answer",
+      requestId: "ans-1",
+      playerId: "p1",
+      optionId: correct,
+    });
+    expect(ack).toEqual({ requestId: "ans-1", ok: true });
+    expect(engine.state.guessAnswers["p1"]?.optionId).toBe(correct);
+
+    engine.closeGuessVoting();
+    expect(engine.state.phase).toBe("reveal");
+    expect(engine.state.lastGuessPoints!["p1"]).toBeGreaterThan(0);
+    expect(engine.state.lastGuessPoints!["p2"]).toBe(0);
   });
 });

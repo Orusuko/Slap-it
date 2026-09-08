@@ -13,7 +13,8 @@ export const HOST_PRESENCE_KEY = "host";
 export type RoomCommand =
   | { type: "join"; requestId: string; playerId: string; name: string }
   | { type: "vote"; requestId: string; playerId: string; yes: boolean }
-  | { type: "voteStars"; requestId: string; playerId: string; stars: number };
+  | { type: "voteStars"; requestId: string; playerId: string; stars: number }
+  | { type: "answer"; requestId: string; playerId: string; optionId: string };
 
 export type RoomAck =
   | { requestId: string; ok: true }

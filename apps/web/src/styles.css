@@ -825,6 +825,40 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 }
 
 .karaoke-screen { width: 100%; }
+
+.guess-listen { text-align: center; width: 100%; }
+.guess-listen h1 {
+  margin: 18px 0 8px;
+  font-family: "Archivo Black", sans-serif;
+  font-size: clamp(2rem, 6vw, 4rem);
+}
+.guess-listen .progress-track { margin-inline: auto; max-width: 640px; }
+.guess-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 24px;
+}
+.guess-option {
+  min-height: 88px;
+  border: 3px solid;
+  font-weight: 800;
+  font-family: inherit;
+  font-size: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 12px 14px;
+  cursor: pointer;
+}
+.guess-option:disabled { cursor: default; }
+.guess-option--0 { background: #e11d48; border-color: #e11d48; color: #fff; }
+.guess-option--1 { background: #2563eb; border-color: #2563eb; color: #fff; }
+.guess-option--2 { background: #eab308; border-color: #eab308; color: #111; }
+.guess-option--3 { background: #16a34a; border-color: #16a34a; color: #fff; }
+.guess-option.is-correct { outline: 4px solid #fff; }
+.guess-option.is-locked { opacity: 0.55; }
 .track-meta {
   display: flex;
   justify-content: space-between;

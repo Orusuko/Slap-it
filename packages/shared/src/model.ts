@@ -140,7 +140,7 @@ export function genreLabel(genre: string): string {
 
 export const gameConfigSchema = z.object({
   maxPlayers: z.number().int().min(2).max(8),
-  mode: z.enum(["individual", "relay", "karaoke"]),
+  mode: z.enum(["individual", "relay", "karaoke", "guess"]),
   blackoutDuration: z.enum(["line", "section"]),
   mask: z.enum(["total", "partial"]),
   groupVoting: z.boolean(),
@@ -208,6 +208,23 @@ export interface RelayPlan {
   turns: RelayTurn[];
 }
 
+export interface GuessOption {
+  id: string;
+  label: string;
+}
+
+export interface GuessQuestion {
+  options: GuessOption[];
+  correctOptionId: string;
+  clipStart: number;
+  clipEnd: number;
+}
+
+export interface GuessAnswer {
+  optionId: string;
+  answeredAt: number;
+}
+
 export interface RoomPublicState {
   code: string;
   hostId: string;
@@ -267,4 +284,14 @@ export interface RoomPublicState {
    * excluyendo placeholders).
    */
   selectedSongId: string | null;
+  /** Pregunta de 4 opciones del modo `guess`; null en los demás modos. */
+  guessQuestion: GuessQuestion | null;
+  /** Primera respuesta de cada jugador en la ventana de `guess`. */
+  guessAnswers: Record<string, GuessAnswer>;
+  /** Reloj de pared al abrir las opciones de `guess`. */
+  guessWindowStartedAt: number | null;
+  /** Límite de la ventana de respuesta de `guess`. */
+  guessDeadlineAt: number | null;
+  /** Puntos de la última ronda `guess` por jugador; null fuera de ese modo. */
+  lastGuessPoints: Record<string, number> | null;
 }

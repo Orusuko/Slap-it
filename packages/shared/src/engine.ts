@@ -9,6 +9,14 @@ import {
   selectSong,
 } from "./game.js";
 import {
+  GUESS_ANSWER_WINDOW_MS,
+  GUESS_OPTION_COUNT,
+  GUESS_REVEAL_MS,
+  buildGuessQuestion,
+  sanitizeGuessState,
+  scoreGuessAnswer,
+} from "./guess.js";
+import {
   getCurrentTurn,
   planRelay,
   reassignRelayFrom,
@@ -112,6 +120,21 @@ export class RoomManager {
     return all.filter((song) => allowed.has(song.id));
   }
 
+  /** Catálogo real (demo + registradas) para distractores de Adivina la canción. */
+  private catalogForGuess(): Song[] {
+    return [...demoSongs, ...this.externalSongs.values()].filter(
+      (song) => !isPlaceholderSong(song),
+    );
+  }
+
+  private assertGuessLibrary(): void {
+    if (this.catalogForGuess().length < GUESS_OPTION_COUNT) {
+      throw new Error(
+        "Se necesitan al menos 4 canciones en la biblioteca para Adivina la canción.",
+      );
+    }
+  }
+
   create(hostId: string, _name: string): RoomPublicState {
     const code = this.createCode();
     const state: RoomPublicState = {
@@ -141,6 +164,11 @@ export class RoomManager {
       hostHasAudio: false,
       hostNow: null,
       selectedSongId: null,
+      guessQuestion: null,
+      guessAnswers: {},
+      guessWindowStartedAt: null,
+      guessDeadlineAt: null,
+      lastGuessPoints: null,
     };
     this.rooms.set(code, { state, usedSongIds: [], turnTimers: [], setlistSongIds: null });
     return state;
@@ -205,6 +233,7 @@ export class RoomManager {
     if (this.poolFor(room).length === 0) {
       throw new Error("El setlist está vacío. Incluye al menos una canción.");
     }
+    if (room.state.config.mode === "guess") this.assertGuessLibrary();
     room.state.round = 0;
     room.state.totalRounds = room.state.config.totalRounds;
     this.prepareRound(room);
@@ -283,6 +312,7 @@ export class RoomManager {
     this.publish(room);
     this.scheduleTurnAdvances(room);
     this.scheduleBlackoutEnd(room);
+    if (state.config.mode === "guess") this.scheduleGuessClipEnd(room);
   }
 
   continue(code: string, actorId: string): void {
@@ -305,6 +335,7 @@ export class RoomManager {
     if (this.poolFor(room).length === 0) {
       throw new Error("El setlist está vacío. Incluye al menos una canción.");
     }
+    if (room.state.config.mode === "guess") this.assertGuessLibrary();
     room.state.totalRounds += 1;
     room.state.round += 1;
     this.prepareRound(room);
@@ -320,8 +351,44 @@ export class RoomManager {
     this.publish(room);
   }
 
+  answer(code: string, playerId: string, optionId: string): void {
+    const room = this.requireRoom(code);
+    const state = room.state;
+    if (state.config.mode !== "guess") {
+      throw new Error("Esta partida no es Adivina la canción");
+    }
+    if (state.phase !== "voting") {
+      throw new Error("Las opciones todavía no están abiertas");
+    }
+    if (!state.players.some((player) => player.id === playerId)) {
+      throw new Error("No perteneces a esta sala");
+    }
+    if (state.guessAnswers[playerId]) {
+      throw new Error("Ya respondiste");
+    }
+    if (!state.guessQuestion?.options.some((option) => option.id === optionId)) {
+      throw new Error("Esa opción no existe");
+    }
+    state.guessAnswers[playerId] = { optionId, answeredAt: Date.now() };
+    this.publish(room);
+    if (Object.keys(state.guessAnswers).length >= state.players.length) {
+      this.resolveGuess(room);
+    }
+  }
+
+  closeGuessVoting(code: string, actorId: string): void {
+    const room = this.requireHost(code, actorId);
+    if (room.state.config.mode !== "guess" || room.state.phase !== "voting") {
+      throw new Error("No hay una votación de Adivina la canción abierta");
+    }
+    this.resolveGuess(room);
+  }
+
   vote(code: string, playerId: string, yes: boolean): void {
     const room = this.requireRoom(code);
+    if (room.state.config.mode === "guess") {
+      throw new Error("Esta partida se responde con opciones");
+    }
     if (room.state.config.mode === "karaoke") {
       throw new Error("Esta partida usa voto de estrellas");
     }
@@ -345,6 +412,9 @@ export class RoomManager {
   /** Voto de estrellas (1–5) del modo karaoke; el cantante de la ronda no vota. */
   voteStars(code: string, playerId: string, stars: number): void {
     const room = this.requireRoom(code);
+    if (room.state.config.mode === "guess") {
+      throw new Error("Esta partida se responde con opciones");
+    }
     if (room.state.config.mode !== "karaoke") {
       throw new Error("El voto de estrellas solo aplica en modo karaoke");
     }
@@ -401,6 +471,9 @@ export class RoomManager {
 
   resolveManually(code: string, actorId: string, correct: boolean): void {
     const room = this.requireHost(code, actorId);
+    if (room.state.config.mode === "guess") {
+      throw new Error("Adivina la canción no usa resolución manual");
+    }
     if (!["reveal", "voting"].includes(room.state.phase)) {
       throw new Error("No hay una interpretación pendiente");
     }
@@ -435,6 +508,7 @@ export class RoomManager {
     room.state.players = room.state.players.filter((player) => player.id !== playerId);
     delete room.state.votes[playerId];
     delete room.state.starVotes[playerId];
+    delete room.state.guessAnswers[playerId];
 
     if (
       room.state.config.mode === "relay" &&
@@ -455,8 +529,35 @@ export class RoomManager {
       return false;
     }
 
+    if (room.state.config.mode === "guess" && ACTIVE_ROUND_PHASES.has(room.state.phase)) {
+      this.handleGuessPlayerLeft(room);
+      return false;
+    }
+
     this.publish(room);
     return false;
+  }
+
+  private handleGuessPlayerLeft(room: Room): void {
+    const state = room.state;
+    if (state.players.length < 2) {
+      this.clearAllTimers(room);
+      state.phase = "finished";
+      state.endReason = "not_enough_players";
+      state.countdownEndsAt = null;
+      state.revealEndsAt = null;
+      this.publish(room);
+      return;
+    }
+    if (
+      state.phase === "voting" &&
+      state.players.length > 0 &&
+      state.players.every((player) => Boolean(state.guessAnswers[player.id]))
+    ) {
+      this.resolveGuess(room);
+      return;
+    }
+    this.publish(room);
   }
 
   private handleIndividualPlayerLeft(
@@ -597,6 +698,17 @@ export class RoomManager {
       state.startPosition = 0;
       const singers = this.karaokeSingersFor(room);
       state.singerId = singers[state.round % Math.max(1, singers.length)] ?? null;
+    } else if (state.config.mode === "guess") {
+      state.relayPlan = null;
+      state.activeTurnIndex = null;
+      state.blackout = null;
+      state.singerId = null;
+      state.guessQuestion = buildGuessQuestion(state.song, this.catalogForGuess());
+      state.startPosition = state.guessQuestion.clipStart;
+      state.guessAnswers = {};
+      state.guessWindowStartedAt = null;
+      state.guessDeadlineAt = null;
+      state.lastGuessPoints = null;
     } else {
       state.relayPlan = null;
       state.activeTurnIndex = null;
@@ -619,6 +731,13 @@ export class RoomManager {
     state.starVotes = {};
     state.lastStars = null;
     state.endReason = null;
+    if (state.config.mode !== "guess") {
+      state.guessQuestion = null;
+      state.guessAnswers = {};
+      state.guessWindowStartedAt = null;
+      state.guessDeadlineAt = null;
+      state.lastGuessPoints = null;
+    }
     this.publish(room);
   }
 
@@ -657,6 +776,55 @@ export class RoomManager {
       }, delay);
       room.turnTimers.push(timer);
     }
+  }
+
+  private scheduleGuessClipEnd(room: Room): void {
+    const { startedAt, guessQuestion, startPosition, playbackOffsetMs } = room.state;
+    if (startedAt === null || !guessQuestion) return;
+    const delay = Math.max(
+      0,
+      startedAt + (guessQuestion.clipEnd - startPosition) * 1_000 - playbackOffsetMs - Date.now(),
+    );
+    this.setTimer(room, delay, () => this.openGuessVoting(room));
+  }
+
+  private openGuessVoting(room: Room): void {
+    if (room.state.phase !== "playing") return;
+    const now = Date.now();
+    room.state.phase = "voting";
+    room.state.guessAnswers = {};
+    room.state.guessWindowStartedAt = now;
+    room.state.guessDeadlineAt = now + GUESS_ANSWER_WINDOW_MS;
+    this.publish(room);
+    this.setTimer(room, GUESS_ANSWER_WINDOW_MS, () => this.resolveGuess(room));
+  }
+
+  private resolveGuess(room: Room): void {
+    this.clearAllTimers(room);
+    const state = room.state;
+    const correctOptionId = state.guessQuestion?.correctOptionId ?? "";
+    const windowStartedAt = state.guessWindowStartedAt ?? Date.now();
+    const points: Record<string, number> = {};
+    let anyCorrect = false;
+    for (const player of state.players) {
+      const answer = state.guessAnswers[player.id];
+      const pts = answer
+        ? scoreGuessAnswer(answer.optionId === correctOptionId, answer.answeredAt, windowStartedAt)
+        : 0;
+      points[player.id] = pts;
+      player.score += pts;
+      if (pts > 0) anyCorrect = true;
+    }
+    state.lastGuessPoints = points;
+    state.lastResult = anyCorrect;
+    state.phase = "reveal";
+    state.revealEndsAt = Date.now() + GUESS_REVEAL_MS;
+    this.publish(room);
+    this.setTimer(room, GUESS_REVEAL_MS, () => {
+      state.phase = "score";
+      state.revealEndsAt = null;
+      this.publish(room);
+    });
   }
 
   private scheduleBlackoutEnd(room: Room): void {
@@ -729,7 +897,7 @@ export class RoomManager {
     // Clonar: el estado interno se muta in-place. Sin copia, React ve la misma
     // referencia en setState y omite el re-render (el host no ve joins, etc.),
     // mientras los jugadores sí actualizan porque el broadcast llega deserializado.
-    this.emitState(room.state.code, structuredClone(room.state));
+    this.emitState(room.state.code, sanitizeGuessState(structuredClone(room.state)));
   }
 
   private requireRoom(codeInput: string): Room {

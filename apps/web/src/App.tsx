@@ -7,6 +7,7 @@ import {
   Download,
   FileUp,
   Gauge,
+  Headphones,
   ListMusic,
   LoaderCircle,
   Mic2,
@@ -399,6 +400,14 @@ function Lobby({
     [setlistRecords, setlistFilter],
   );
   const setlistIds = useMemo(() => setlistSongs.map((song) => song.id), [setlistSongs]);
+  const guessCatalogCount = useMemo(
+    () =>
+      new Set([
+        ...partySongs.map((song) => song.id),
+        ...librarySongs.map((record) => record.song.id),
+      ]).size,
+    [librarySongs],
+  );
 
   // El host solo arma el setlist; se manda al motor apenas cambia, no hace
   // falta esperar a "Empezar show" (así el sorteo de la primera ronda ya lo respeta).
@@ -487,9 +496,14 @@ function Lobby({
               <p className="config-note">Los puntos se acumulan ronda a ronda; al terminar podrás pedir «Una más».</p>
             </fieldset>
             <Choice
-              legend="Modo de canto"
+              legend="Modo de juego"
               value={config.mode}
-              options={[["relay", "Relevo + sorpresa"], ["individual", "Individual"], ["karaoke", "Karaoke por turnos"]]}
+              options={[
+                ["relay", "Relevo + sorpresa"],
+                ["individual", "Individual"],
+                ["karaoke", "Karaoke por turnos"],
+                ["guess", "Adivina la canción"],
+              ]}
               onChange={(value) => patchConfig("mode", value as GameConfig["mode"])}
             />
             {config.mode === "relay" && (
@@ -505,7 +519,19 @@ function Lobby({
                 onChange={(value) => patchConfig("blackoutDuration", value as GameConfig["blackoutDuration"])}
               />
             )}
-            {config.mode === "karaoke" ? (
+            {config.mode === "guess" ? (
+              <>
+                <p className="config-note">
+                  Suena el instrumental 10 s desde el estribillo. Luego 4 opciones en el teléfono.
+                  Quien acierte más rápido suma más puntos.
+                </p>
+                {guessCatalogCount < 4 && (
+                  <p className="wizard-error">
+                    Se necesitan al menos 4 canciones en la biblioteca para Adivina la canción.
+                  </p>
+                )}
+              </>
+            ) : config.mode === "karaoke" ? (
               <fieldset className="singer-picker">
                 <legend>¿Quién canta esta noche?</legend>
                 <p className="config-note">
@@ -696,7 +722,11 @@ function Lobby({
             >
               Guardar configuración
             </ActionButton>
-            <ActionButton type="submit" busy={busy} disabled={state.players.length < 2}>
+            <ActionButton
+              type="submit"
+              busy={busy}
+              disabled={state.players.length < 2 || (config.mode === "guess" && guessCatalogCount < 4)}
+            >
               <Mic2 size={20} /> Empezar show
             </ActionButton>
             {state.players.length < 2 && <p className="helper">Se necesitan al menos 2 jugadores.</p>}
@@ -710,7 +740,9 @@ function Lobby({
                 ? "Modo: relevo con sorpresa — turnos de 1 a 4 estrofas; tras dos vueltas alguien canta a oscuras."
                 : state.config.mode === "karaoke"
                   ? "Modo: karaoke por turnos — letra siempre visible; al terminar, votan con estrellas."
-                  : "Modo: individual — cada quien canta su tramo y recibe su apagón."}
+                  : state.config.mode === "guess"
+                    ? "Modo: Adivina la canción — 10 s de instrumental y 4 opciones en el teléfono."
+                    : "Modo: individual — cada quien canta su tramo y recibe su apagón."}
             </p>
             <p>Espera aquí. El anfitrión iniciará cuando estén todas las voces.</p>
           </section>
@@ -763,25 +795,36 @@ function Ready({ state, role, busy, error, onCountdown, hostAudio }: {
 }) {
   const isRelay = state.config.mode === "relay";
   const isKaraoke = state.config.mode === "karaoke";
+  const isGuess = state.config.mode === "guess";
   const rounds = state.relayPlan?.roundsCompleted ?? 2;
   const audioReady = role === "host" ? hostAudio.hasAudio : state.hostHasAudio;
   const probing = role === "host" && hostAudio.probing;
-  const canStart = !probing;
+  const canStart = !probing && (!isGuess || (role === "host" ? hostAudio.hasAudio : true));
   return (
     <section className="countdown-screen">
       <span className="step-label"><ListMusic size={18} /> Pista preparada</span>
-      <h1>{state.song?.title}</h1>
-      <p className="artist">{state.song?.artist}</p>
+      <h1>{isGuess ? "¿Adivinas la canción?" : state.song?.title}</h1>
+      {!isGuess && <p className="artist">{state.song?.artist}</p>}
       <div className="seek-instruction">
         <span>
           {probing ? "Comprobando audio…" : audioReady ? "Audio listo en la app" : "Antes de comenzar"}
         </span>
-        <strong>{formatTime(state.startPosition)}</strong>
+        {!isGuess && <strong>{formatTime(state.startPosition)}</strong>}
         {probing ? (
           <p>Espera un momento mientras se verifica si hay un archivo de audio en la app.</p>
         ) : audioReady ? (
           <p>
-            {role === "host" ? (
+            {isGuess ? (
+              role === "host" ? (
+                <>
+                  Se oirá el instrumental unos 10 segundos. Nadie ve la letra.
+                  Fuente: <b>{hostAudio.fileName}</b>
+                  {hostAudio.source === "catalog" ? " (catálogo)" : hostAudio.source === "manual" ? " (adjunto)" : ""}.
+                </>
+              ) : (
+                <>El anfitrión reproduce el instrumental. Nadie ve título ni letra.</>
+              )
+            ) : role === "host" ? (
               <>
                 Se reproducirá solo desde {formatTime(state.startPosition)}.
                 Fuente: <b>{hostAudio.fileName}</b>
@@ -791,6 +834,12 @@ function Ready({ state, role, busy, error, onCountdown, hostAudio }: {
               <>El anfitrión reproduce la pista en la app. Solo sigue la letra en pantalla.</>
             )}
           </p>
+        ) : isGuess ? (
+          <p>
+            {role === "host"
+              ? "Este modo necesita el MP3 en la TV. Sin audio in-app no se puede buscar en Spotify: spoilearía la respuesta."
+              : "El anfitrión pondrá el instrumental en la TV. Nadie ve título ni letra."}
+          </p>
         ) : (
           <p>
             {role === "host"
@@ -799,7 +848,11 @@ function Ready({ state, role, busy, error, onCountdown, hostAudio }: {
           </p>
         )}
       </div>
-      {isRelay ? (
+      {isGuess ? (
+        <p className="relay-hint">
+          <Headphones size={16} /> Se oirá el instrumental unos 10 segundos. Nadie ve la letra.
+        </p>
+      ) : isRelay ? (
         <p className="singer-call">
           <Mic2 /> Empieza: <strong>{playerName(state, openingPlayerId(state))}</strong>
         </p>
@@ -850,7 +903,11 @@ function Ready({ state, role, busy, error, onCountdown, hostAudio }: {
         </div>
       )}
       {role === "host" ? (
-        <ActionButton busy={busy || probing} disabled={!canStart} onClick={onCountdown}>
+        <ActionButton
+          busy={busy || probing}
+          disabled={!canStart || (isGuess && !hostAudio.hasAudio)}
+          onClick={onCountdown}
+        >
           {probing ? "Comprobando audio…" : <>Todo listo · iniciar 3-2-1 <ArrowRight size={20} /></>}
         </ActionButton>
       ) : (
@@ -873,6 +930,7 @@ function Countdown({ state, role, busy, audioReady, hostAudio, onRetryPlayback, 
   const now = useClock(true, 50, clockOffsetMs);
   const remaining = Math.max(0, Math.ceil(((state.countdownEndsAt ?? now) - now) / 1000));
   const isRelay = state.config.mode === "relay";
+  const isGuess = state.config.mode === "guess";
   // Con audio in-app, al llegar a "YA" el motor espera la confirmación real
   // de `play()` antes de marcar `playing` (fix de sync P5): puede tardar un
   // instante (o bloquearse por autoplay) sin que el 3-2-1 avance más.
@@ -880,15 +938,17 @@ function Countdown({ state, role, busy, audioReady, hostAudio, onRetryPlayback, 
   return (
     <section className="countdown-screen">
       <span className="step-label"><ListMusic size={18} /> La próxima pista</span>
-      <h1>{state.song?.title}</h1>
-      <p className="artist">{state.song?.artist}</p>
+      <h1>{isGuess ? "¿Adivinas la canción?" : state.song?.title}</h1>
+      {!isGuess && <p className="artist">{state.song?.artist}</p>}
       <div className="seek-instruction">
         <span>{audioReady ? "Audio en la app" : "Audio externo"}</span>
-        <strong>{formatTime(state.startPosition)}</strong>
+        {!isGuess && <strong>{formatTime(state.startPosition)}</strong>}
         <p>
-          {audioReady
-            ? "El anfitrión reproduce la pista; al 0 solo sigue la letra."
-            : <>Busca <b>{formatTime(state.startPosition)}</b> si eres el anfitrión; dale play al llegar a 0.</>}
+          {isGuess
+            ? "Se oirá el instrumental unos 10 segundos. Nadie ve la letra."
+            : audioReady
+              ? "El anfitrión reproduce la pista; al 0 solo sigue la letra."
+              : <>Busca <b>{formatTime(state.startPosition)}</b> si eres el anfitrión; dale play al llegar a 0.</>}
         </p>
       </div>
       <output className="countdown-number" aria-live="polite">{remaining || "YA"}</output>
@@ -901,9 +961,58 @@ function Countdown({ state, role, busy, audioReady, hostAudio, onRetryPlayback, 
       {waitingForAudio && !hostAudio.needsGesture && (
         <p className="waiting-copy">Arrancando el audio…</p>
       )}
-      <p className="singer-call">
-        <Mic2 /> {isRelay ? "Empieza" : "Canta"}: <strong>{playerName(state, openingPlayerId(state))}</strong>
-      </p>
+      {!isGuess && (
+        <p className="singer-call">
+          <Mic2 /> {isRelay ? "Empieza" : "Canta"}: <strong>{playerName(state, openingPlayerId(state))}</strong>
+        </p>
+      )}
+    </section>
+  );
+}
+
+function GuessListen({
+  state,
+  role,
+  busy,
+  hostAudio,
+  clockOffsetMs = 0,
+}: {
+  state: RoomPublicState;
+  role: Exclude<Role, null>;
+  busy: boolean;
+  hostAudio: HostAudio;
+  clockOffsetMs?: number;
+}) {
+  const now = useClock(true, 80, clockOffsetMs);
+  const hostAudioPosition = role === "host" ? hostAudio.getCurrentTime() : null;
+  const position = hostAudioPosition ?? getDisplayPosition(state, now, role);
+  const clipStart = state.guessQuestion?.clipStart ?? state.startPosition;
+  const clipEnd = state.guessQuestion?.clipEnd ?? clipStart + 10;
+  const span = Math.max(0.001, clipEnd - clipStart);
+  const progress = Math.min(100, Math.max(0, ((position - clipStart) / span) * 100));
+
+  return (
+    <section className="guess-listen">
+      <span className="step-label"><Headphones size={18} /> Adivina la canción</span>
+      <h1>Escucha…</h1>
+      <p>El instrumental suena unos 10 segundos. Nadie ve la letra.</p>
+      <div className="progress-track" aria-label={`Clip: ${Math.round(progress)}%`}>
+        <span style={{ transform: `scaleX(${progress / 100})` }} />
+      </div>
+      <output className="reveal-timer">{Math.max(0, Math.ceil(clipEnd - position))}s</output>
+      {role === "host" && hostAudio.needsGesture && hostAudio.hasAudio && (
+        <div className="autoplay-nudge">
+          <p>El navegador bloqueó el audio. Pulsa para arrancar la pista.</p>
+          <ActionButton
+            busy={busy}
+            onClick={() => {
+              void hostAudio.playFrom(getPlaybackPosition(state));
+            }}
+          >
+            Reproducir audio
+          </ActionButton>
+        </div>
+      )}
     </section>
   );
 }
@@ -1037,6 +1146,36 @@ function Reveal({ state, role, busy, error, onResolve }: {
   const missing = state.song?.lines.filter((line) => state.blackout?.lineIds.includes(line.id)) ?? [];
   const remaining = Math.max(0, Math.ceil(((state.revealEndsAt ?? now) - now) / 1000));
   const manualHost = !state.config.groupVoting && role === "host";
+  if (state.config.mode === "guess") {
+    const points = state.lastGuessPoints ?? {};
+    const roundLine = state.players
+      .map((player) => {
+        const pts = points[player.id] ?? 0;
+        return `${player.name} ${pts > 0 ? "+" : ""}${pts}`;
+      })
+      .join(" · ");
+    return (
+      <section className="reveal-screen">
+        <span className="step-label"><Headphones size={18} /> Era</span>
+        <h1>{state.song?.title}</h1>
+        <p className="artist">{state.song?.artist}</p>
+        <div className="guess-grid">
+          {(state.guessQuestion?.options ?? []).map((option, index) => (
+            <div
+              key={option.id}
+              className={`guess-option guess-option--${index} ${option.id === state.guessQuestion?.correctOptionId ? "is-correct" : ""}`}
+            >
+              {option.label}
+            </div>
+          ))}
+        </div>
+        <p className="relay-hint">{roundLine}</p>
+        {remaining > 0 && <output className="reveal-timer">{remaining}s</output>}
+        <p className="waiting-copy">El marcador llega solo.</p>
+        {error && <Notice message={error} />}
+      </section>
+    );
+  }
   return (
     <section className="reveal-screen">
       <span className="step-label"><RotateCcw size={18} /> La letra era</span>
@@ -1062,7 +1201,18 @@ function Reveal({ state, role, busy, error, onResolve }: {
   );
 }
 
-function Voting({ state, role, clientId, busy, error, onVote, onVoteStars, onCloseKaraokeVoting }: {
+function Voting({
+  state,
+  role,
+  clientId,
+  busy,
+  error,
+  onVote,
+  onVoteStars,
+  onAnswer,
+  onCloseKaraokeVoting,
+  onCloseGuessVoting,
+}: {
   state: RoomPublicState;
   role: Exclude<Role, null>;
   clientId: string;
@@ -1070,11 +1220,54 @@ function Voting({ state, role, clientId, busy, error, onVote, onVoteStars, onClo
   error: string;
   onVote: (yes: boolean) => void;
   onVoteStars: (stars: number) => void;
+  onAnswer: (optionId: string) => void;
   onCloseKaraokeVoting: () => void;
+  onCloseGuessVoting: () => void;
 }) {
   const isKaraoke = state.config.mode === "karaoke";
   const eligible = Math.max(0, state.players.length - 1);
   const singer = state.singerId === clientId;
+  const now = useClock(state.config.mode === "guess", 100);
+  if (state.config.mode === "guess") {
+    const count = Object.keys(state.guessAnswers).length;
+    const answered = Object.hasOwn(state.guessAnswers, clientId);
+    const remaining = Math.max(0, Math.ceil(((state.guessDeadlineAt ?? now) - now) / 1000));
+    return (
+      <section className="voting-screen">
+        <span className="step-label"><Headphones size={18} /> ¿Qué canción es?</span>
+        <h1>Elige una opción</h1>
+        <p>Primera respuesta se bloquea. Quien acierte más rápido suma más.</p>
+        <div className="vote-progress">
+          <strong>{count}/{state.players.length}</strong>
+          <span>respuestas</span>
+        </div>
+        {remaining > 0 && <output className="reveal-timer">{remaining}s</output>}
+        <div className="guess-grid">
+          {(state.guessQuestion?.options ?? []).map((option, index) => (
+            <button
+              key={option.id}
+              type="button"
+              className={`guess-option guess-option--${index} ${answered ? "is-locked" : ""}`}
+              disabled={role === "host" || answered || busy}
+              onClick={() => onAnswer(option.id)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+        {role === "host" ? (
+          <ActionButton variant="secondary" busy={busy} onClick={onCloseGuessVoting}>
+            Cerrar ahora
+          </ActionButton>
+        ) : answered ? (
+          <p className="voted-confirmation"><Check /> Respuesta bloqueada</p>
+        ) : (
+          <p className="waiting-copy">Toca una opción. No se puede cambiar.</p>
+        )}
+        {error && <Notice message={error} />}
+      </section>
+    );
+  }
 
   if (isKaraoke) {
     const count = Object.keys(state.starVotes).length;
@@ -1155,11 +1348,22 @@ function Score({ state, role, busy, error, onContinue, onExtendRound, onFinishSh
   onFinishShow: () => void;
 }) {
   const isKaraoke = state.config.mode === "karaoke";
+  const isGuess = state.config.mode === "guess";
   const sorted = [...state.players].sort((a, b) => b.score - a.score);
   const isLastRound = state.round + 1 >= state.totalRounds;
   return (
     <section className="score-screen">
-      {isKaraoke ? (
+      {isGuess ? (
+        <div className="result-stamp is-hit">
+          <Headphones />
+          <span>Puntos de la ronda</span>
+          <small>
+            {state.players
+              .map((player) => `${player.name} +${state.lastGuessPoints?.[player.id] ?? 0}`)
+              .join(" · ")}
+          </small>
+        </div>
+      ) : isKaraoke ? (
         <div className="result-stamp is-hit">
           <Star />
           <span>{state.lastStars ?? 0} pts</span>
@@ -1355,7 +1559,10 @@ export default function App() {
     }
 
     if (
-      (state.phase === "score" || state.phase === "reveal" || state.phase === "finished") &&
+      (state.phase === "score" ||
+        state.phase === "reveal" ||
+        state.phase === "voting" ||
+        state.phase === "finished") &&
       previousPhase === "playing"
     ) {
       hostAudio.pause();
@@ -1615,6 +1822,24 @@ export default function App() {
     [clientId, sendPlayerCommand],
   );
 
+  const castGuessAnswer = useCallback(
+    (optionId: string) => {
+      if (!clientId) return;
+      setBusy(true);
+      setError("");
+      void sendPlayerCommand((requestId) => ({
+        type: "answer",
+        requestId,
+        playerId: clientId,
+        optionId,
+      })).then((ack) => {
+        setBusy(false);
+        if (!ack.ok) setError(ack.error);
+      });
+    },
+    [clientId, sendPlayerCommand],
+  );
+
   const castStarVote = useCallback(
     (stars: number) => {
       if (!clientId) return;
@@ -1697,7 +1922,15 @@ export default function App() {
           />
         );
       case "playing":
-        return (
+        return state.config.mode === "guess" ? (
+          <GuessListen
+            state={state}
+            role={role}
+            busy={busy}
+            hostAudio={hostAudio}
+            clockOffsetMs={clockOffsetMs}
+          />
+        ) : (
           <Karaoke
             state={state}
             role={role}
@@ -1734,7 +1967,9 @@ export default function App() {
             error={error}
             onVote={castVote}
             onVoteStars={castStarVote}
+            onAnswer={castGuessAnswer}
             onCloseKaraokeVoting={() => runHostAction(() => engineRef.current!.closeKaraokeVoting())}
+            onCloseGuessVoting={() => runHostAction(() => engineRef.current!.closeGuessVoting())}
           />
         );
       case "score":
@@ -1755,6 +1990,7 @@ export default function App() {
   }, [
     attemptHostPlayback,
     busy,
+    castGuessAnswer,
     castStarVote,
     castVote,
     clientId,

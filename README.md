@@ -166,6 +166,26 @@ grupo puntúe la interpretación:
 3. El resto del grupo (menos quien cantó) vota de **1 a 5 estrellas**; la
    suma de estrellas son los puntos de esa ronda para quien cantó.
 
+### Modo Adivina la canción
+
+Cuarto modo: nadie canta. El anfitrión pone el **instrumental de karaoke**
+en la TV (hace falta audio in-app; Spotify spoilearía la respuesta) y
+suenan **10 segundos desde el estribillo**, sin título, artista ni letra.
+
+1. En el lobby, elige **Adivina la canción** y las rondas de la noche
+   (el mismo stepper 1–12). Hacen falta **al menos 4 canciones reales** en
+   la biblioteca.
+2. Tras el 3-2-1, la TV solo muestra «Escucha…» mientras corre el clip.
+3. En el teléfono aparecen **4 opciones** (estilo Kahoot: rojo, azul,
+   amarillo, verde). Si dos de las cuatro comparten título, esas van como
+   `título — artista`. La primera respuesta se bloquea.
+4. Quien acierta más rápido suma más puntos: 1000 al instante, 500 al
+   límite de 15 s; fallo o sin respuesta = 0.
+5. La TV revela la canción correcta unos 4 s y pasa al marcador.
+
+El anfitrión-TV no juega. Las opciones se cierran solas a los 15 s, cuando
+todos responden, o si el host pulsa **Cerrar ahora**.
+
 ### Varias rondas por noche
 
 El lobby tiene un selector de **rondas de la noche** (1–12, cualquier modo).
@@ -230,8 +250,9 @@ de Supabase, visible para todo el grupo) o añade entradas reales en
 placeholders (`id` con prefijo `placeholder-` o título `PLACEHOLDER — …`),
 esos **no** entran al sorteo de fiesta salvo que no quede otra opción.
 
-El modo por defecto de la sala es **relevo con sorpresa**. El individual y
-el karaoke por turnos siguen disponibles en la configuración del lobby.
+El modo por defecto de la sala es **relevo con sorpresa**. El individual, el
+karaoke por turnos y **Adivina la canción** siguen disponibles en la
+configuración del lobby.
 
 Si un jugador se desconecta a mitad del relevo y quedan ≥ 2 voces, se
 reasignan los turnos futuros (o se regenera el plan si aún no empezó el
